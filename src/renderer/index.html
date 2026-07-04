@@ -149,13 +149,13 @@
 
 		<section class="pref-block">
 			<h4>啟動</h4>
-			<div class="pref-row">
-				<label>固定啟動資料夾</label>
+			<div class="sort-options">
+				<label class="radio-pill"><input type="radio" name="startupMode" value="lastUsed" id="startupModeLastUsed"><span>回到最後瀏覽進度</span></label>
+				<label class="radio-pill"><input type="radio" name="startupMode" value="fixed" id="startupModeFixed"><span>使用固定資料夾</span></label>
 			</div>
 			<p id="startupFolderPath" class="startup-folder-path"></p>
 			<div class="pref-row-buttons">
 				<button id="btnChooseStartupFolder" class="btn-secondary">選擇資料夾…</button>
-				<button id="btnClearStartupFolder" class="btn-secondary">清除（改回記住上次）</button>
 			</div>
 		</section>
 

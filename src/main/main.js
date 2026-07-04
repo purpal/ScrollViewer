@@ -46,6 +46,7 @@ const CONFIG_PATH = () => path.join(app.getPath('userData'), 'config.json');
 // readMap is keyed by folder path -> { [filePath]: true }, same reasoning.
 const DEFAULT_CONFIG = {
 	path: '',
+	startupMode: 'lastUsed',
 	startupFolder: '',
 	sort: 'nameu',
 	history: {},

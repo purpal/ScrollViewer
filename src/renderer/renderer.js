@@ -668,7 +668,10 @@ function applyGridAvailability() {
 }
 
 function updateStartupFolderDisplay() {
-	$('#startupFolderPath').text(config.startupFolder || '未設定（預設回到上次開啟的資料夾）');
+	$('input[name=startupMode][value=' + config.startupMode + ']').prop('checked', true);
+	var fixed = config.startupMode === 'fixed';
+	$('#startupFolderPath').text(config.startupFolder || '尚未選擇資料夾').toggleClass('disabled-text', !fixed);
+	$('#btnChooseStartupFolder').prop('disabled', !fixed);
 }
 
 async function chooseStartupFolder() {
@@ -678,8 +681,8 @@ async function chooseStartupFolder() {
 	updateStartupFolderDisplay();
 }
 
-function clearStartupFolder() {
-	patchConfig({ startupFolder: '' });
+function setStartupMode(mode) {
+	patchConfig({ startupMode: mode });
 	updateStartupFolderDisplay();
 }
 
@@ -844,7 +847,7 @@ function bindButtons() {
 	$('#prefsPanel').on('mousedown', function (e) { if (e.target === this) closePrefs(); });
 	$('#btnResetKeybindings').click(resetKeybindings);
 	$('#btnChooseStartupFolder').click(chooseStartupFolder);
-	$('#btnClearStartupFolder').click(clearStartupFolder);
+	$('input[name=startupMode]').change(function () { setStartupMode(this.value); });
 	$('#prev_icon').click(myPrev);
 	$('#top_icon').click(myTop);
 	$('#next_icon').click(myNext);
@@ -921,7 +924,7 @@ async function readConfig() {
 	document.documentElement.style.setProperty('--accent', config.accentColor);
 	applyKeybindings();
 	renderRecentList();
-	if (config.startupFolder) {
+	if (config.startupMode === 'fixed' && config.startupFolder) {
 		config.path = config.startupFolder;
 		openPath();
 	}

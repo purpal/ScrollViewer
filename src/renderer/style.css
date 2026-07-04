@@ -547,12 +547,21 @@ body.dark .radio-pill:hover { background: rgba(255, 255, 255, 0.06); }
 }
 
 .startup-folder-path {
-	margin: 0 0 6px;
+	margin: 6px 0;
 	font-size: 12px;
 	color: var(--text-muted);
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
+}
+
+.startup-folder-path.disabled-text {
+	opacity: .5;
+}
+
+.btn-secondary:disabled {
+	opacity: .5;
+	cursor: default;
 }
 
 .pref-number {
