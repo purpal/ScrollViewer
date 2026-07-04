@@ -289,6 +289,10 @@ function hideHelp() {
 	$('#my_help').animate({ top: '-' + hh + 'px' }, 200);
 }
 
+function positionHelpHidden() {
+	$('#my_help').css('top', '-' + $('#my_help').height() + 'px');
+}
+
 // dark mode / grid view / fullscreen -------------------------------------------------------
 
 function applyDarkMode(on) {
@@ -463,6 +467,7 @@ $(document).ready(function () {
 		setScale();
 	});
 
+	positionHelpHidden();
 	bindHotkey();
 	bindAnimate();
 	bindSort();

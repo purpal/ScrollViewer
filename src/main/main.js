@@ -93,6 +93,7 @@ function createWindow() {
 			preload: path.join(__dirname, 'preload.js'),
 			contextIsolation: true,
 			nodeIntegration: false,
+			sandbox: false,
 		},
 	});
 
@@ -158,7 +159,9 @@ ipcMain.handle('archive:open', async (event, filePath) => {
 			return { error: 'Unsupported archive format: ' + ext };
 		}
 		archiveCache.clear();
-		const sessionId = String(++archiveCounter);
+		// prefixed with a letter so the WHATWG URL parser doesn't coerce a
+		// purely-numeric host into IPv4 dotted notation (e.g. "1" -> "0.0.0.1")
+		const sessionId = 's' + (++archiveCounter);
 		archiveCache.set(sessionId, items);
 		return { sessionId, entries: items.map((it, index) => ({ index, name: it.name })) };
 	} catch (err) {

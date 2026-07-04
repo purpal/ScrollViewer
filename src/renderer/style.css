@@ -82,11 +82,10 @@ body {
 
 #my_help {
 	background-color: #fde19b;
-	top: -800px;
+	top: -3000px;
 	width: 600px;
-	height: 800px;
 	position: fixed;
-	z-index: 9995;
+	z-index: 9998;
 	display: flex;
 	justify-content: center;
 	align-items: center;
