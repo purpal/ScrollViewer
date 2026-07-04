@@ -1,6 +1,5 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 const path = require('path');
-const { pathToFileURL } = require('url');
 
 contextBridge.exposeInMainWorld('api', {
 	chooseFolder: () => ipcRenderer.invoke('dialog:choose-folder'),
@@ -9,12 +8,11 @@ contextBridge.exposeInMainWorld('api', {
 	openArchive: (filePath) => ipcRenderer.invoke('archive:open', filePath),
 	getConfig: () => ipcRenderer.invoke('config:get'),
 	setConfig: (partial) => ipcRenderer.invoke('config:set', partial),
+	resetKeybindings: () => ipcRenderer.invoke('config:reset-keybindings'),
 	toggleFullscreen: () => ipcRenderer.invoke('window:toggle-fullscreen'),
 	onFullscreenChange: (cb) => ipcRenderer.on('fullscreen-changed', (_e, val) => cb(val)),
 	onBeforeClose: (cb) => ipcRenderer.on('app:before-close', cb),
 	readyToClose: () => ipcRenderer.send('app:ready-to-close'),
 	dirname: (p) => path.dirname(p),
-	basename: (p, ext) => path.basename(p, ext),
-	toFileUrl: (p) => pathToFileURL(p).href,
 	getDroppedPath: (file) => webUtils.getPathForFile(file),
 });

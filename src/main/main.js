@@ -1,13 +1,16 @@
 const { app, BrowserWindow, ipcMain, dialog, protocol } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 const JSZip = require('jszip');
 const unrar = require('node-unrar-js');
+const UTIF = require('utif2');
 
-const IMAGE_EXT = ['.bmp', '.jpg', '.jpeg', '.png', '.gif', '.webp'];
+const TIFF_EXT = ['.tif', '.tiff'];
+const IMAGE_EXT = ['.bmp', '.jpg', '.jpeg', '.png', '.gif', '.webp', ...TIFF_EXT];
 const ARCHIVE_EXT = ['.zip', '.cbz', '.rar', '.cbr'];
 const SUPPORTED_EXT = [...IMAGE_EXT, ...ARCHIVE_EXT];
-const IMAGE_RE = /\.(bmp|jpe?g|png|gif|webp)$/i;
+const IMAGE_RE = /\.(bmp|jpe?g|png|gif|webp|tiff?)$/i;
 
 const MIME_TYPES = {
 	'.bmp': 'image/bmp',
@@ -16,6 +19,21 @@ const MIME_TYPES = {
 	'.png': 'image/png',
 	'.gif': 'image/gif',
 	'.webp': 'image/webp',
+};
+
+const DEFAULT_KEYBINDINGS = {
+	prev: 'left',
+	next: 'right',
+	top: 'home',
+	zoomOut: '-',
+	zoomIn: 'plus',
+	zoomReset: '=',
+	help: 'f1',
+	openFolder: 'mod+o',
+	darkMode: 'mod+d',
+	gridView: 'mod+g',
+	fullscreen: 'f11',
+	preferences: 'mod+,',
 };
 
 const CONFIG_PATH = () => path.join(app.getPath('userData'), 'config.json');
@@ -28,6 +46,12 @@ const DEFAULT_CONFIG = {
 	recent: [],
 	darkMode: false,
 	viewMode: 'strip',
+	zoomStep: 5,
+	keybindings: { ...DEFAULT_KEYBINDINGS },
+	showSidebarToolbar: true,
+	showFloatingNav: true,
+	accentColor: '#53c4c6',
+	sidebarCollapsed: true,
 };
 
 let config = { ...DEFAULT_CONFIG };
@@ -44,7 +68,12 @@ protocol.registerSchemesAsPrivileged([
 function loadConfig() {
 	try {
 		const data = fs.readFileSync(CONFIG_PATH(), 'utf-8');
-		config = { ...DEFAULT_CONFIG, ...JSON.parse(data) };
+		const loaded = JSON.parse(data);
+		config = {
+			...DEFAULT_CONFIG,
+			...loaded,
+			keybindings: { ...DEFAULT_KEYBINDINGS, ...(loaded.keybindings || {}) },
+		};
 	} catch (err) {
 		config = { ...DEFAULT_CONFIG };
 	}
@@ -58,6 +87,71 @@ function toArrayBuffer(buffer) {
 	return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
 }
 
+// ---- minimal PNG encoder, used to transcode decoded TIFF pixels for display ----
+
+function crc32(buf) {
+	const table = crc32.table || (crc32.table = (() => {
+		const t = [];
+		for (let n = 0; n < 256; n++) {
+			let c = n;
+			for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+			t[n] = c;
+		}
+		return t;
+	})());
+	let crc = 0xffffffff;
+	for (let i = 0; i < buf.length; i++) crc = table[(crc ^ buf[i]) & 0xff] ^ (crc >>> 8);
+	return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data) {
+	const typeBuf = Buffer.from(type, 'ascii');
+	const lenBuf = Buffer.alloc(4);
+	lenBuf.writeUInt32BE(data.length, 0);
+	const crcBuf = Buffer.alloc(4);
+	crcBuf.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0);
+	return Buffer.concat([lenBuf, typeBuf, data, crcBuf]);
+}
+
+function encodePngRGBA(width, height, rgba) {
+	const sig = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+	const ihdr = Buffer.alloc(13);
+	ihdr.writeUInt32BE(width, 0);
+	ihdr.writeUInt32BE(height, 4);
+	ihdr[8] = 8; // bit depth
+	ihdr[9] = 6; // color type RGBA
+	const rowSize = 1 + width * 4;
+	const raw = Buffer.alloc(rowSize * height);
+	for (let y = 0; y < height; y++) {
+		raw[y * rowSize] = 0;
+		rgba.copy(raw, y * rowSize + 1, y * width * 4, (y + 1) * width * 4);
+	}
+	const idat = zlib.deflateSync(raw);
+	return Buffer.concat([sig, pngChunk('IHDR', ihdr), pngChunk('IDAT', idat), pngChunk('IEND', Buffer.alloc(0))]);
+}
+
+function tiffToPng(buffer) {
+	const ifds = UTIF.decode(buffer);
+	UTIF.decodeImage(buffer, ifds[0]);
+	const rgba = Buffer.from(UTIF.toRGBA8(ifds[0]));
+	return encodePngRGBA(ifds[0].width, ifds[0].height, rgba);
+}
+
+// browsers can't render TIFF natively, so transcode it to PNG on the way out
+function toDisplayItem(name, buffer) {
+	const ext = path.extname(name).toLowerCase();
+	if (TIFF_EXT.includes(ext)) {
+		try {
+			return { name, buffer: tiffToPng(buffer), mime: 'image/png' };
+		} catch (err) {
+			return { name, buffer, mime: 'application/octet-stream' };
+		}
+	}
+	return { name, buffer, mime: MIME_TYPES[ext] || 'application/octet-stream' };
+}
+
+// ---- reading pages: from a zip/cbz, a rar/cbr, or a plain directory of loose images ----
+
 async function extractZip(data) {
 	const zip = await JSZip.loadAsync(data);
 	const files = Object.values(zip.files)
@@ -65,7 +159,7 @@ async function extractZip(data) {
 		.sort((a, b) => a.name.localeCompare(b.name));
 	const items = [];
 	for (const f of files) {
-		items.push({ name: f.name, buffer: await f.async('nodebuffer') });
+		items.push(toDisplayItem(f.name, await f.async('nodebuffer')));
 	}
 	return items;
 }
@@ -81,12 +175,25 @@ async function extractRar(data) {
 	for (const f of extracted.files) {
 		byName.set(f.fileHeader.name, f.extraction);
 	}
-	return names.map((name) => ({ name, buffer: Buffer.from(byName.get(name)) }));
+	return names.map((name) => toDisplayItem(name, Buffer.from(byName.get(name))));
+}
+
+async function readDirImages(dirPath) {
+	const names = await fs.promises.readdir(dirPath);
+	const imageNames = names
+		.filter((n) => IMAGE_RE.test(n))
+		.sort((a, b) => a.localeCompare(b));
+	const items = [];
+	for (const name of imageNames) {
+		const buffer = await fs.promises.readFile(path.join(dirPath, name));
+		items.push(toDisplayItem(name, buffer));
+	}
+	return items;
 }
 
 function createWindow() {
 	win = new BrowserWindow({
-		width: 800,
+		width: 900,
 		height: 950,
 		icon: path.join(__dirname, '..', '..', 'img', 'icon.png'),
 		webPreferences: {
@@ -122,15 +229,40 @@ ipcMain.handle('dialog:choose-folder', async () => {
 
 ipcMain.handle('fs:list-dir', async (event, dirPath) => {
 	try {
-		const names = await fs.promises.readdir(dirPath);
+		const dirents = await fs.promises.readdir(dirPath, { withFileTypes: true });
 		const entries = [];
-		for (const name of names) {
-			const ext = path.extname(name).toLowerCase();
-			if (!SUPPORTED_EXT.includes(ext)) continue;
-			const full = path.join(dirPath, name);
-			const stat = await fs.promises.stat(full);
-			entries.push({ name, path: full, ext, mtime: stat.mtime.toISOString() });
+		const looseImages = [];
+
+		for (const d of dirents) {
+			const full = path.join(dirPath, d.name);
+			if (d.isDirectory()) {
+				let children;
+				try {
+					children = await fs.promises.readdir(full);
+				} catch (err) {
+					continue;
+				}
+				if (!children.some((n) => IMAGE_RE.test(n))) continue;
+				const stat = await fs.promises.stat(full);
+				entries.push({ name: d.name, path: full, type: 'directory', mtime: stat.mtime.toISOString() });
+				continue;
+			}
+			const ext = path.extname(d.name).toLowerCase();
+			if (ARCHIVE_EXT.includes(ext)) {
+				const stat = await fs.promises.stat(full);
+				entries.push({ name: d.name, path: full, type: 'archive', mtime: stat.mtime.toISOString() });
+			} else if (IMAGE_EXT.includes(ext)) {
+				looseImages.push({ name: d.name, path: full });
+			}
 		}
+
+		if (looseImages.length > 0) {
+			const stats = await Promise.all(looseImages.map((f) => fs.promises.stat(f.path)));
+			const mtime = new Date(Math.max(...stats.map((s) => s.mtime.getTime()))).toISOString();
+			const name = looseImages.length === 1 ? looseImages[0].name : path.basename(dirPath);
+			entries.push({ name, path: dirPath, type: 'directory', mtime });
+		}
+
 		return { entries };
 	} catch (err) {
 		return { error: err.message };
@@ -146,17 +278,22 @@ ipcMain.handle('fs:stat', async (event, p) => {
 	}
 });
 
-ipcMain.handle('archive:open', async (event, filePath) => {
+ipcMain.handle('archive:open', async (event, targetPath) => {
 	try {
-		const ext = path.extname(filePath).toLowerCase();
-		const data = await fs.promises.readFile(filePath);
+		const stat = await fs.promises.stat(targetPath);
 		let items;
-		if (ext === '.zip' || ext === '.cbz') {
-			items = await extractZip(data);
-		} else if (ext === '.rar' || ext === '.cbr') {
-			items = await extractRar(data);
+		if (stat.isDirectory()) {
+			items = await readDirImages(targetPath);
 		} else {
-			return { error: 'Unsupported archive format: ' + ext };
+			const ext = path.extname(targetPath).toLowerCase();
+			const data = await fs.promises.readFile(targetPath);
+			if (ext === '.zip' || ext === '.cbz') {
+				items = await extractZip(data);
+			} else if (ext === '.rar' || ext === '.cbr') {
+				items = await extractRar(data);
+			} else {
+				return { error: 'Unsupported archive format: ' + ext };
+			}
 		}
 		archiveCache.clear();
 		// prefixed with a letter so the WHATWG URL parser doesn't coerce a
@@ -171,7 +308,16 @@ ipcMain.handle('archive:open', async (event, filePath) => {
 
 ipcMain.handle('config:get', () => config);
 ipcMain.handle('config:set', async (event, partial) => {
-	config = { ...config, ...partial };
+	config = {
+		...config,
+		...partial,
+		keybindings: { ...config.keybindings, ...(partial.keybindings || {}) },
+	};
+	await saveConfig();
+	return config;
+});
+ipcMain.handle('config:reset-keybindings', async () => {
+	config = { ...config, keybindings: { ...DEFAULT_KEYBINDINGS } };
 	await saveConfig();
 	return config;
 });
@@ -192,8 +338,7 @@ app.whenReady().then(() => {
 			return new Response(null, { status: 404 });
 		}
 		const item = items[index];
-		const ext = path.extname(item.name).toLowerCase();
-		return new Response(item.buffer, { headers: { 'content-type': MIME_TYPES[ext] || 'application/octet-stream' } });
+		return new Response(item.buffer, { headers: { 'content-type': item.mime } });
 	});
 
 	loadConfig();

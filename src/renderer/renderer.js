@@ -1,12 +1,32 @@
-const ARCHIVE_EXT = ['.zip', '.cbz', '.rar', '.cbr'];
 const RECENT_LIMIT = 10;
+
+const ACTION_LABELS = {
+	prev: '上一話',
+	next: '下一話',
+	top: '回到頂端',
+	zoomOut: '縮小',
+	zoomIn: '放大',
+	zoomReset: '原始大小',
+	help: '使用說明',
+	openFolder: '開啟資料夾',
+	darkMode: '深色模式切換',
+	gridView: '格狀瀏覽切換',
+	fullscreen: '全螢幕沉浸閱讀',
+	preferences: '偏好設定',
+};
+
+const ACCENT_PALETTE = ['#53c4c6', '#4f7df3', '#8b5cf6', '#f43f5e', '#22c55e', '#f59e0b'];
+
+const ICON_FOLDER_SVG = '<svg viewBox="0 0 24 24" class="ti-icon"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>';
+const ICON_ARCHIVE_SVG = '<svg viewBox="0 0 24 24" class="ti-icon"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v2a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1V9"/></svg>';
 
 var config;
 var curr = null;
 var reList = null;
 var scale;
 var origWidth;
-var nail = false;
+var boundKeys = [];
+var capturingAction = null;
 
 //------------------------------------------------------------------------------------------
 
@@ -28,6 +48,12 @@ function stripExt(name) {
 	return ext ? name.slice(0, -ext.length) : name;
 }
 
+function makeIconNode(html) {
+	var tpl = document.createElement('template');
+	tpl.innerHTML = html;
+	return tpl.content.firstChild;
+}
+
 function removeSimg() {
 	$('.simg').remove();
 }
@@ -47,7 +73,7 @@ function persistConfig() {
 function saveCurr() {
 	if (!curr) return;
 	curr.dataset.vpos = $('#page').scrollTop();
-	$(curr).css({ color: 'black' });
+	$(curr).removeClass('active');
 }
 
 function clean() {
@@ -70,48 +96,41 @@ function sortList() {
 	}
 }
 
-// file / archive handling ------------------------------------------------------------------
+// file / archive / directory handling ------------------------------------------------------
 
 async function showImg(node) {
 	saveCurr();
 	curr = node;
 	var src = node.dataset.url;
 	updateHistory(src);
-	$(node).css({ color: 'red' }).focus();
+	$(node).addClass('active').focus();
 	showMsg(basename(src));
 	removeSimg();
 	$('#pic').attr('src', '');
 
-	var ext = extname(src);
-	if (ARCHIVE_EXT.includes(ext)) {
-		var res = await window.api.openArchive(src);
-		if (res.error) {
-			showMsg(res.error);
-			return;
+	var res = await window.api.openArchive(src);
+	if (res.error) {
+		showMsg(res.error);
+		return;
+	}
+	res.entries.forEach(function (entry, i) {
+		var url = 'comic://' + res.sessionId + '/' + entry.index;
+		if (i === 0) {
+			$('#pic').attr('src', url);
+			$('#pic').off('click.gridnav').on('click.gridnav', function () {
+				if (config.viewMode === 'grid') switchToStripAndScroll($('#pic')[0]);
+			});
 		}
-		res.entries.forEach(function (entry, i) {
-			var url = 'comic://' + res.sessionId + '/' + entry.index;
-			if (i === 0) {
-				$('#pic').attr('src', url);
-				$('#pic').off('click.gridnav').on('click.gridnav', function () {
-					if (config.viewMode === 'grid') switchToStripAndScroll($('#pic')[0]);
-				});
-			}
-			else {
-				var img = document.createElement('img');
-				img.className = 'simg';
-				img.src = url;
-				img.addEventListener('click', function () {
-					if (config.viewMode === 'grid') switchToStripAndScroll(img);
-				});
-				document.getElementById('picList').appendChild(img);
-			}
-		});
-	}
-	else {
-		$('#pic').off('click.gridnav');
-		$('#pic').attr('src', window.api.toFileUrl(src));
-	}
+		else {
+			var img = document.createElement('img');
+			img.className = 'simg';
+			img.src = url;
+			img.addEventListener('click', function () {
+				if (config.viewMode === 'grid') switchToStripAndScroll(img);
+			});
+			document.getElementById('picList').appendChild(img);
+		}
+	});
 	$('#picList').focus();
 }
 
@@ -132,7 +151,10 @@ function makeReLocal(reSort) {
 		div.tabIndex = index + 10;
 		div.dataset.url = entry.path;
 		div.dataset.vpos = (config.lastfile === entry.path) ? (config.vpos || 0) : 0;
-		div.textContent = stripExt(entry.name);
+		div.appendChild(makeIconNode(entry.type === 'archive' ? ICON_ARCHIVE_SVG : ICON_FOLDER_SVG));
+		var label = document.createElement('span');
+		label.textContent = stripExt(entry.name);
+		div.appendChild(label);
 		div.addEventListener('click', function () { showImg(div); });
 		document.getElementById('titleList').appendChild(div);
 
@@ -149,7 +171,7 @@ function makeReLocal(reSort) {
 	}
 	else if (refi !== -1) {
 		curr = document.getElementById('re' + refi);
-		$(curr).css({ color: 'red' });
+		$(curr).addClass('active');
 	}
 }
 
@@ -201,11 +223,25 @@ function renderRecentList() {
 	});
 }
 
-function toggleRecentList() {
-	$('#recentList').toggleClass('hidden');
+function openRecent() {
+	$('#sidebar').addClass('expanded');
+	config.sidebarCollapsed = false;
+	persistConfig();
+	var el = document.getElementById('recentSection');
+	if (el) el.scrollIntoView({ block: 'nearest' });
 }
 
-// window / navigation --------------------------------------------------------------------
+// sidebar / navigation --------------------------------------------------------------------
+
+function toggleSidebar() {
+	config.sidebarCollapsed = !config.sidebarCollapsed;
+	applySidebarState();
+	persistConfig();
+}
+
+function applySidebarState() {
+	$('#sidebar').toggleClass('expanded', !config.sidebarCollapsed);
+}
 
 function myTop() {
 	$('#page').scrollTop(0);
@@ -225,24 +261,6 @@ function myPrev() {
 	else alert('已經是目錄開頭');
 }
 
-function setLayout() {
-	var w = window.innerWidth;
-	var h = window.innerHeight;
-	var menuw = $('#my_slider_menu').width();
-	var navw = $('#my_nav').width();
-	var helpw = $('#my_help').width();
-
-	$('#page').css('height', (h - 2) + 'px');
-	$('#my_slider_content').css('height', (h - 150 - 2) + 'px');
-	$('#my_slider_menu').css('height', (h - 3) + 'px');
-	$('#my_slider_scroll').css('height', (h - 3) + 'px');
-
-	$('#page').css('width', (w - menuw) + 'px');
-	$('#my_header').css('width', (w - menuw - 17) + 'px');
-	$('#my_nav').css('left', ((w - menuw - 17 - navw) / 2 + menuw) + 'px');
-	$('#my_help').css('left', ((w - menuw - 17 - helpw) / 2 + menuw) + 'px');
-}
-
 function setScale() {
 	if (config.viewMode === 'grid') return;
 	scale = (scale === undefined) ? 100 : scale;
@@ -253,14 +271,15 @@ function setScale() {
 }
 
 function zoomOut() {
+	var step = config.zoomStep || 5;
 	scale = (scale === undefined) ? 100 : scale;
-	scale = ((scale - 5) > 0) ? (scale - 5) : 5;
+	scale = ((scale - step) > 0) ? (scale - step) : step;
 	setScale();
 }
 
 function zoomIn() {
 	scale = (scale === undefined) ? 100 : scale;
-	scale += 5;
+	scale += (config.zoomStep || 5);
 	setScale();
 }
 
@@ -269,28 +288,144 @@ function zoomOrig() {
 	setScale();
 }
 
-function nailSlider() {
-	nail = !nail;
-	if (nail === false) $('#menu_icon').removeClass('nail');
-	else {
-		$('#menu_icon').addClass('nail');
-		$('#my_slider_scroll').css('left', '54px');
-	}
+// overlays: help / preferences ------------------------------------------------------------
+
+function formatCombo(combo) {
+	return (combo || '').split('+').map(function (p) { return p.charAt(0).toUpperCase() + p.slice(1); }).join(' + ');
+}
+
+function renderHelpHotkeys() {
+	var list = $('#helpHotkeyList');
+	list.empty();
+	Object.keys(ACTION_LABELS).forEach(function (action) {
+		var label = document.createElement('div');
+		label.textContent = ACTION_LABELS[action];
+		var key = document.createElement('div');
+		key.textContent = formatCombo(config.keybindings[action]);
+		list.append(label, key);
+	});
 }
 
 function showHelp() {
-	var h = window.innerHeight;
-	var hh = $('#my_help').height();
-	$('#my_help').animate({ top: ((h - hh) / 2) + 'px' }, 200);
+	renderHelpHotkeys();
+	$('#my_help').addClass('visible');
 }
 
 function hideHelp() {
-	var hh = $('#my_help').height();
-	$('#my_help').animate({ top: '-' + hh + 'px' }, 200);
+	$('#my_help').removeClass('visible');
 }
 
-function positionHelpHidden() {
-	$('#my_help').css('top', '-' + $('#my_help').height() + 'px');
+function renderAccentSwatches() {
+	var wrap = $('#accentSwatches');
+	wrap.empty();
+	ACCENT_PALETTE.forEach(function (color) {
+		var sw = document.createElement('button');
+		sw.type = 'button';
+		sw.className = 'swatch' + (config.accentColor === color ? ' active' : '');
+		sw.style.background = color;
+		sw.addEventListener('click', function () { setAccent(color); renderAccentSwatches(); });
+		wrap.append(sw);
+	});
+	var customInput = document.createElement('input');
+	customInput.type = 'color';
+	customInput.className = 'swatch';
+	customInput.value = /^#[0-9a-f]{6}$/i.test(config.accentColor) ? config.accentColor : '#53c4c6';
+	customInput.addEventListener('input', function () { setAccent(this.value); });
+	wrap.append(customInput);
+}
+
+function setAccent(color) {
+	config.accentColor = color;
+	document.documentElement.style.setProperty('--accent', color);
+	persistConfig();
+}
+
+function eventToCombo(e) {
+	var key = e.key;
+	if (['Control', 'Alt', 'Shift', 'Meta'].includes(key)) return null;
+	var map = {
+		' ': 'space', ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down',
+		Escape: 'esc', Enter: 'enter', Home: 'home', End: 'end', '+': 'plus',
+	};
+	key = map[key] || key.toLowerCase();
+	var parts = [];
+	if (e.ctrlKey) parts.push('ctrl');
+	if (e.altKey) parts.push('alt');
+	if (e.shiftKey) parts.push('shift');
+	if (e.metaKey) parts.push('meta');
+	parts.push(key);
+	return parts.join('+');
+}
+
+function renderKeybindList() {
+	var list = $('#keybindList');
+	list.empty();
+	Object.keys(ACTION_LABELS).forEach(function (action) {
+		var row = document.createElement('div');
+		row.className = 'keybind-row';
+		var label = document.createElement('span');
+		label.textContent = ACTION_LABELS[action];
+		var keyBtn = document.createElement('button');
+		keyBtn.type = 'button';
+		keyBtn.className = 'keybind-key';
+		keyBtn.textContent = formatCombo(config.keybindings[action]);
+		keyBtn.addEventListener('click', function () { startCapture(action, keyBtn); });
+		row.appendChild(label);
+		row.appendChild(keyBtn);
+		list.append(row);
+	});
+}
+
+function startCapture(action, btn) {
+	if (capturingAction) return;
+	capturingAction = action;
+	btn.classList.add('capturing');
+	var prevText = btn.textContent;
+	btn.textContent = '按下按鍵…';
+
+	function onKey(e) {
+		e.preventDefault();
+		e.stopPropagation();
+		if (e.key === 'Escape') { finish(); return; }
+		var combo = eventToCombo(e);
+		if (!combo) return;
+		config.keybindings[action] = combo;
+		persistConfig();
+		applyKeybindings();
+		finish();
+	}
+	function finish() {
+		document.removeEventListener('keydown', onKey, true);
+		btn.classList.remove('capturing');
+		capturingAction = null;
+		renderKeybindList();
+	}
+	document.addEventListener('keydown', onKey, true);
+}
+
+function applyToolbarVisibility() {
+	$('body').toggleClass('hide-sidebar-toolbar', !config.showSidebarToolbar);
+	$('body').toggleClass('hide-floating-nav', !config.showFloatingNav);
+}
+
+function openPrefs() {
+	$('#prefDarkMode').prop('checked', !!config.darkMode);
+	$('#prefZoomStep').val(config.zoomStep);
+	$('#prefShowSidebarToolbar').prop('checked', !!config.showSidebarToolbar);
+	$('#prefShowFloatingNav').prop('checked', !!config.showFloatingNav);
+	renderAccentSwatches();
+	renderKeybindList();
+	$('#prefsPanel').addClass('visible');
+}
+
+function closePrefs() {
+	$('#prefsPanel').removeClass('visible');
+}
+
+async function resetKeybindings() {
+	config = await window.api.resetKeybindings();
+	applyKeybindings();
+	renderKeybindList();
 }
 
 // dark mode / grid view / fullscreen -------------------------------------------------------
@@ -372,19 +507,28 @@ function bindDragDrop() {
 
 // hotkeys / bindings ---------------------------------------------------------------------
 
-function bindHotkey() {
-	Mousetrap.bind('left', myPrev);
-	Mousetrap.bind('right', myNext);
-	Mousetrap.bind('home', myTop);
-	Mousetrap.bind('-', zoomOut);
-	Mousetrap.bind('plus', zoomIn);
-	Mousetrap.bind('=', zoomOrig);
+function applyKeybindings() {
+	boundKeys.forEach(function (k) { Mousetrap.unbind(k); });
+	boundKeys = [];
+	var actions = {
+		prev: myPrev, next: myNext, top: myTop,
+		zoomOut: zoomOut, zoomIn: zoomIn, zoomReset: zoomOrig,
+		help: showHelp, openFolder: chooseFile, darkMode: toggleDark,
+		gridView: toggleGrid, fullscreen: toggleFullscreen, preferences: openPrefs,
+	};
+	Object.keys(actions).forEach(function (action) {
+		var combo = config.keybindings[action];
+		if (!combo) return;
+		Mousetrap.bind(combo, function (e) { e.preventDefault(); actions[action](); });
+		boundKeys.push(combo);
+	});
 	Mousetrap.bind('enter', zoomOrig);
-	Mousetrap.bind('f1', showHelp);
-	Mousetrap.bind('ctrl+o', chooseFile);
-	Mousetrap.bind('mod+d', toggleDark);
-	Mousetrap.bind('mod+g', toggleGrid);
-	Mousetrap.bind('f11', toggleFullscreen);
+	boundKeys.push('enter');
+	Mousetrap.bind('esc', function () {
+		if ($('#my_help').hasClass('visible')) hideHelp();
+		else if ($('#prefsPanel').hasClass('visible')) closePrefs();
+	});
+	boundKeys.push('esc');
 }
 
 function bindSort() {
@@ -396,31 +540,26 @@ function bindSort() {
 	});
 }
 
-function bindAnimate() {
-	var ssw = $('#my_slider_scroll').width();
-	var menuw = $('#my_slider_menu').width();
-	$('#my_slider_menu').mouseover(function () {
-		if (nail === false && $('#my_slider_scroll').css('left') === (('-' + (ssw - menuw)) + 'px'))
-			$('#my_slider_scroll').animate({ left: (menuw - 10) + 'px' }, 200);
-	});
-	$('#my_slider_scroll').mouseleave(function () {
-		if (nail === false && $('#my_slider_scroll').css('left') === ((menuw - 10) + 'px'))
-			$('#my_slider_scroll').animate({ left: (('-' + (ssw - menuw)) + 'px') }, 200);
-	});
-	$('#picList').mouseover(function () { $('#my_nav').fadeTo(200, 0.8); });
+function bindFloatingNavReveal() {
+	$('#picList').mouseover(function () { $('#floatingNav').css({ opacity: 0.9, pointerEvents: 'auto' }); });
 	$('#picList').mouseleave(function () {
-		if ($('#my_nav:hover').length <= 0) $('#my_nav').fadeTo(200, 0);
+		if ($('#floatingNav:hover').length <= 0) $('#floatingNav').css({ opacity: 0, pointerEvents: 'none' });
 	});
 }
 
 function bindButtons() {
-	$('#menu_icon').click(nailSlider);
+	$('#btnToggleSidebar').click(toggleSidebar);
 	$('#btnOpenFolder').click(chooseFile);
 	$('#btnHelp').click(showHelp);
 	$('#btnCloseHelp').click(hideHelp);
-	$('#btnRecent').click(toggleRecentList);
+	$('#my_help').on('mousedown', function (e) { if (e.target === this) hideHelp(); });
+	$('#btnRecent').click(openRecent);
 	$('#btnDark').click(toggleDark);
 	$('#btnGrid').click(toggleGrid);
+	$('#btnSettings').click(openPrefs);
+	$('#btnClosePrefs').click(closePrefs);
+	$('#prefsPanel').on('mousedown', function (e) { if (e.target === this) closePrefs(); });
+	$('#btnResetKeybindings').click(resetKeybindings);
 	$('#prev_icon').click(myPrev);
 	$('#top_icon').click(myTop);
 	$('#next_icon').click(myNext);
@@ -428,6 +567,25 @@ function bindButtons() {
 	$('#original_icon').click(zoomOrig);
 	$('#zoomin_icon').click(zoomIn);
 	$('#fullscreen_icon').click(toggleFullscreen);
+
+	$('#prefDarkMode').on('change', toggleDark);
+	$('#prefZoomStep').on('change', function () {
+		var v = parseInt(this.value, 10);
+		if (!isFinite(v) || v < 1) v = 1;
+		config.zoomStep = v;
+		this.value = v;
+		persistConfig();
+	});
+	$('#prefShowSidebarToolbar').on('change', function () {
+		config.showSidebarToolbar = this.checked;
+		applyToolbarVisibility();
+		persistConfig();
+	});
+	$('#prefShowFloatingNav').on('change', function () {
+		config.showFloatingNav = this.checked;
+		applyToolbarVisibility();
+		persistConfig();
+	});
 }
 
 async function readConfig() {
@@ -435,17 +593,17 @@ async function readConfig() {
 	$('input[name=sort][value=' + config.sort + ']').prop('checked', true);
 	applyDarkMode(config.darkMode);
 	setViewMode(config.viewMode || 'strip');
+	applySidebarState();
+	applyToolbarVisibility();
+	document.documentElement.style.setProperty('--accent', config.accentColor);
+	applyKeybindings();
 	renderRecentList();
 	if (config.path) openPath();
 }
 
 function setWindow() {
-	setLayout();
-	window.addEventListener('resize', setLayout);
-
 	window.api.onFullscreenChange(function (isFullscreen) {
 		$('body').toggleClass('immersive', isFullscreen);
-		setLayout();
 	});
 
 	window.api.onBeforeClose(function () {
@@ -467,12 +625,10 @@ $(document).ready(function () {
 		setScale();
 	});
 
-	positionHelpHidden();
-	bindHotkey();
-	bindAnimate();
 	bindSort();
 	bindButtons();
 	bindDragDrop();
+	bindFloatingNavReveal();
 	setWindow();
 	readConfig();
 });

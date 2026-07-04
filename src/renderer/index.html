@@ -6,122 +6,165 @@
 </head>
 <body>
 
-<div id="my_slider_menu" class="round_right">
-	<div id="my_slider_icon"><center>
-		<img id="menu_icon" src="../../img/menu.png" class="btn round_right round_left" title="功能表">
-	</center></div>
+<div id="app">
+	<nav id="sidebar" class="sidebar">
+		<div class="sidebar-rail">
+			<button id="btnToggleSidebar" class="icon-btn" title="展開 / 收合選單">
+				<svg viewBox="0 0 24 24" class="icon"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+			</button>
+			<button id="btnOpenFolder" class="icon-btn" title="開啟資料夾">
+				<svg viewBox="0 0 24 24" class="icon"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+			</button>
+			<button id="btnRecent" class="icon-btn" title="最近開啟">
+				<svg viewBox="0 0 24 24" class="icon"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l4 2"/></svg>
+			</button>
+			<div class="rail-spacer"></div>
+			<button id="btnDark" class="icon-btn" title="深色模式">
+				<svg viewBox="0 0 24 24" class="icon"><path d="M20 12.8A8 8 0 1 1 11.2 4 6.4 6.4 0 0 0 20 12.8z"/></svg>
+			</button>
+			<button id="btnGrid" class="icon-btn" title="格狀瀏覽">
+				<svg viewBox="0 0 24 24" class="icon"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>
+			</button>
+			<button id="btnSettings" class="icon-btn" title="偏好設定">
+				<svg viewBox="0 0 24 24" class="icon">
+					<circle cx="12" cy="12" r="3.2"/>
+					<line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/>
+					<line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/>
+					<line x1="4.9" y1="4.9" x2="7" y2="7"/><line x1="17" y1="17" x2="19.1" y2="19.1"/>
+					<line x1="4.9" y1="19.1" x2="7" y2="17"/><line x1="17" y1="7" x2="19.1" y2="4.9"/>
+				</svg>
+			</button>
+			<button id="btnHelp" class="icon-btn" title="使用說明">
+				<svg viewBox="0 0 24 24" class="icon"><circle cx="12" cy="12" r="9"/><path d="M9.3 9.2a2.7 2.7 0 0 1 5.2 1c0 1.8-2.5 2-2.5 3.6"/><line x1="12" y1="17.2" x2="12" y2="17.21"/></svg>
+			</button>
+		</div>
+		<div class="sidebar-panel" id="sidebarPanel">
+			<div class="panel-section" id="recentSection">
+				<h3>最近開啟</h3>
+				<div id="recentList"></div>
+			</div>
+			<div class="panel-section">
+				<h3>排序</h3>
+				<div class="sort-options">
+					<label class="radio-pill"><input type="radio" name="sort" value="nameu" id="snu" checked><span>名稱 ▲</span></label>
+					<label class="radio-pill"><input type="radio" name="sort" value="named" id="snd"><span>名稱 ▼</span></label>
+					<label class="radio-pill"><input type="radio" name="sort" value="time" id="stm"><span>更新時間</span></label>
+				</div>
+			</div>
+			<div class="panel-section panel-section-grow">
+				<h3>清單</h3>
+				<div id="titleList"></div>
+			</div>
+		</div>
+	</nav>
+
+	<main id="main">
+		<header id="header">
+			<span id="txt"></span>
+		</header>
+		<div id="page">
+			<div id="picList" tabindex="1">
+				<img id="pic" class="fimg" src="">
+			</div>
+		</div>
+		<div id="floatingNav" class="floating-nav">
+			<div class="nav-group">
+				<button id="prev_icon" class="icon-btn" title="上一話">
+					<svg viewBox="0 0 24 24" class="icon"><path d="M15 5l-7 7 7 7"/></svg>
+				</button>
+				<button id="top_icon" class="icon-btn" title="回到頂端">
+					<svg viewBox="0 0 24 24" class="icon"><path d="M5 15l7-7 7 7"/></svg>
+				</button>
+				<button id="next_icon" class="icon-btn" title="下一話">
+					<svg viewBox="0 0 24 24" class="icon"><path d="M9 5l7 7-7 7"/></svg>
+				</button>
+			</div>
+			<div class="nav-group">
+				<button id="zoomout_icon" class="icon-btn" title="縮小">
+					<svg viewBox="0 0 24 24" class="icon"><circle cx="10" cy="10" r="6"/><line x1="21" y1="21" x2="15" y2="15"/><line x1="7" y1="10" x2="13" y2="10"/></svg>
+				</button>
+				<button id="original_icon" class="icon-btn" title="原始大小">
+					<svg viewBox="0 0 24 24" class="icon"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6"/></svg>
+				</button>
+				<button id="zoomin_icon" class="icon-btn" title="放大">
+					<svg viewBox="0 0 24 24" class="icon"><circle cx="10" cy="10" r="6"/><line x1="21" y1="21" x2="15" y2="15"/><line x1="7" y1="10" x2="13" y2="10"/><line x1="10" y1="7" x2="10" y2="13"/></svg>
+				</button>
+			</div>
+			<div class="nav-group">
+				<button id="fullscreen_icon" class="icon-btn" title="全螢幕沉浸閱讀">
+					<svg viewBox="0 0 24 24" class="icon"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+				</button>
+			</div>
+		</div>
+	</main>
 </div>
-<div id="my_slider_scroll" class="round_right">
-	<div id="my_slider_toolbar">
-		<img src="../../img/folder.png" class="btn round_right round_left" id="btnOpenFolder" title="本地端資料夾 (Ctrl+O)">
-		<img src="../../img/recent.svg" class="btn round_right round_left" id="btnRecent" title="最近開啟">
-		<img src="../../img/darkmode.svg" class="btn round_right round_left" id="btnDark" title="深色模式 (Ctrl+D)">
-		<img src="../../img/grid.svg" class="btn round_right round_left" id="btnGrid" title="格狀瀏覽 (Ctrl+G)">
-		<img id="btnHelp" src="../../img/help.png" class="btn round_right round_left" title="說明 (F1)">
-		<br><br>
-		<div id="recentList" class="hidden"></div>
-		<label>排序：</label>
-		<input type="radio" name="sort" value="nameu" id="snu" checked><label for="snu">名稱▲</label>
-		<input type="radio" name="sort" value="named" id="snd"><label for="snd">名稱▼</label>
-		<input type="radio" name="sort" value="time" id="stm"><label for="stm">更新時間</label>
-		<br><br>
+
+<div id="my_help" class="overlay-panel">
+	<div class="overlay-card">
+		<h1>ScrollViewer 使用說明</h1>
+		<section class="help-block">
+			<h4>功能說明</h4>
+			<p>方便瀏覽電腦中的長條圖片，尤其是長條漫畫的分割壓縮檔。</p>
+		</section>
+		<section class="help-block">
+			<h4>使用方法</h4>
+			<p>按開啟資料夾選定資料夾，清單中會列出資料夾下的圖檔、壓縮檔與子資料夾，點選瀏覽；也可以直接把資料夾或壓縮檔拖曳進視窗開啟。</p>
+		</section>
+		<section class="help-block">
+			<h4>檔案格式</h4>
+			<p>支援 .bmp .gif .jpg .png .webp .tif/.tiff 圖檔，以及 .zip/.cbz .rar/.cbr 壓縮檔。壓縮檔、含圖片的子資料夾、或同層散落的圖片都會串成長條圖捲動瀏覽。</p>
+		</section>
+		<section class="help-block">
+			<h4>快速鍵</h4>
+			<div id="helpHotkeyList" class="hotkey-list"></div>
+		</section>
+		<p class="help-center">Author: Purpal@ptt.cc</p>
+		<button id="btnCloseHelp" class="btn-primary">離開</button>
 	</div>
-	<div id="my_slider_content">
-		<div id="titleList"></div>
+</div>
+
+<div id="prefsPanel" class="overlay-panel">
+	<div class="overlay-card overlay-card-wide">
+		<h1>偏好設定</h1>
+
+		<section class="pref-block">
+			<h4>外觀</h4>
+			<div class="pref-row">
+				<label>深色模式</label>
+				<label class="switch"><input type="checkbox" id="prefDarkMode"><span class="switch-track"></span></label>
+			</div>
+			<div class="pref-row">
+				<label>主題色</label>
+				<div class="swatches" id="accentSwatches"></div>
+			</div>
+		</section>
+
+		<section class="pref-block">
+			<h4>瀏覽</h4>
+			<div class="pref-row">
+				<label>縮放間隔（%）</label>
+				<input type="number" id="prefZoomStep" min="1" max="50" step="1" class="pref-number">
+			</div>
+			<div class="pref-row">
+				<label>顯示側邊工具列</label>
+				<label class="switch"><input type="checkbox" id="prefShowSidebarToolbar"><span class="switch-track"></span></label>
+			</div>
+			<div class="pref-row">
+				<label>顯示浮動導覽列</label>
+				<label class="switch"><input type="checkbox" id="prefShowFloatingNav"><span class="switch-track"></span></label>
+			</div>
+		</section>
+
+		<section class="pref-block">
+			<h4>快速鍵</h4>
+			<div id="keybindList" class="keybind-list"></div>
+			<button id="btnResetKeybindings" class="btn-secondary">重設為預設值</button>
+		</section>
+
+		<button id="btnClosePrefs" class="btn-primary">關閉</button>
 	</div>
 </div>
-<div id="page">
-	<center>
-		<div id="my_help">
-			<div>
-				<center><h1>ScrollViewer v2.0 使用說明</h1></center>
-				<div class="help">
-					【功能說明】 <br>
-					　方便瀏覽電腦中的長條圖片，尤其是長條漫畫的分割壓縮檔。
-				</div>
-				<div class="help">
-					【使用方法】 <br>
-					　按 [本地端資料夾] 選定資料夾，清單中會列出資料夾下的圖檔，<br>
-					　點選清單選擇檔案瀏覽，也可以直接把資料夾或壓縮檔拖曳進視窗開啟。
-				</div>
-				<div class="help">
-					【檔案格式】 <br>
-					　支援 .bmp檔, .gif檔, .jpg檔, .png檔, .webp檔, .zip/.cbz檔, .rar/.cbr檔 <br>
-					　顯示壓縮檔時，會將壓縮檔中的圖片串成長條圖，方便滾動瀏覽。
-				</div>
-				<div class="help">
-					【圖示與快速鍵】 <br>
-					<div class="help_item">
-						<img src="../../img/menu.png" class="help_img"> ： 選單列，點擊可釘選
-					</div>
-					<div class="help_item">
-						<img src="../../img/folder.png" class="help_img"> ： 開啟資料夾  ( 快速鍵：Ctrl + O )
-					</div>
-					<div class="help_item">
-						<img src="../../img/recent.svg" class="help_img"> ： 最近開啟的資料夾
-					</div>
-					<div class="help_item">
-						<img src="../../img/darkmode.svg" class="help_img"> ： 深色模式切換  ( 快速鍵：Ctrl + D )
-					</div>
-					<div class="help_item">
-						<img src="../../img/grid.svg" class="help_img"> ： 格狀縮圖瀏覽模式切換  ( 快速鍵：Ctrl + G )
-					</div>
-					<div class="help_item">
-						<img src="../../img/help.png" class="help_img"> ： 使用說明  ( 快速鍵：F1 )
-					</div>
-					<div class="help_item">
-						<img src="../../img/prev.png" class="help_img"> ： 上一話  ( 快速鍵：← )
-					</div>
-					<div class="help_item">
-						<img src="../../img/next.png" class="help_img"> ： 下一話  ( 快速鍵：→ )
-					</div>
-					<div class="help_item">
-						<img src="../../img/gotop.png" class="help_img"> ： 回到頂端 ( 快速鍵：Home )
-					</div>
-					<div class="help_item">
-						<img src="../../img/zoomin.png" class="help_img"> ： 放大  ( 快速鍵：+ )
-					</div>
-					<div class="help_item">
-						<img src="../../img/zoomout.png" class="help_img"> ： 縮小  ( 快速鍵：- )
-					</div>
-					<div class="help_item">
-						<img src="../../img/original.png" class="help_img"> ： 原始大小  ( 快速鍵：= 或 Enter )
-					</div>
-					<div class="help_item">
-						<img src="../../img/fullscreen.svg" class="help_img"> ： 全螢幕沉浸閱讀模式  ( 快速鍵：F11，再按一次或 Esc 離開 )
-					</div>
-				</div>
-				<div class="help help_center">
-					Author: Purpal@ptt.cc
-				</div>
-				<div class="help help_center">
-					<a href="#" id="btnCloseHelp">[　離開　]</a>
-				</div>
-			</div>
-		</div>
-		<div id="my_header">
-			<div id="txt"></div>
-		</div>
-		<div id="picList" tabindex="1">
-			<img id="pic" class="fimg" src="">
-		</div>
-		<div id="my_nav" class="round_left round_right">
-			<div>
-				<img id="prev_icon" src="../../img/prev.png" class="btn round_right round_left" title="上一話">
-				<img id="top_icon" src="../../img/gotop.png" class="btn round_right round_left" title="回到頂端">
-				<img id="next_icon" src="../../img/next.png" class="btn round_right round_left" title="下一話">
-			</div>
-			<div>
-				<img id="zoomout_icon" src="../../img/zoomout.png" class="btn round_right round_left" title="縮小">
-				<img id="original_icon" src="../../img/original.png" class="btn round_right round_left" title="原始大小">
-				<img id="zoomin_icon" src="../../img/zoomin.png" class="btn round_right round_left" title="放大">
-			</div>
-			<div>
-				<img id="fullscreen_icon" src="../../img/fullscreen.svg" class="btn round_right round_left" title="全螢幕沉浸閱讀">
-			</div>
-		</div>
-	</center>
-</div>
+
 <div id="dropOverlay">拖曳資料夾或壓縮檔到此處開啟</div>
 
 <script type="text/javascript" src="vendor/jquery-1.7.2.js"></script>
