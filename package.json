@@ -1,10 +1,11 @@
 {
-	"name": "scrollviewer",
+	"name": "scrollviewer2",
 	"version": "2.0.0",
-	"description": "ScrollViewer - long-strip comic/image viewer",
+	"description": "ScrollViewer2 - long-strip comic/image viewer",
 	"main": "src/main/main.js",
 	"scripts": {
 		"start": "electron .",
+		"test": "node --test",
 		"dist": "electron-builder"
 	},
 	"author": "Purpal@ptt.cc",
@@ -19,8 +20,8 @@
 		"electron-builder": "^25.1.8"
 	},
 	"build": {
-		"appId": "com.purpal.scrollviewer",
-		"productName": "ScrollViewer",
+		"appId": "com.purpal.scrollviewer2",
+		"productName": "ScrollViewer2",
 		"files": [
 			"src/**/*",
 			"img/**/*",

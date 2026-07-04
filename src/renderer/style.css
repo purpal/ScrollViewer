@@ -167,6 +167,34 @@ body.hide-sidebar-toolbar .sidebar-rail .icon-btn:not(#btnToggleSidebar) {
 	position: relative;
 }
 
+.loading-overlay {
+	position: absolute;
+	inset: 44px 0 0 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: var(--bg);
+	opacity: 0.85;
+	z-index: 20;
+}
+
+.loading-overlay.hidden {
+	display: none;
+}
+
+.loading-spinner {
+	width: 36px;
+	height: 36px;
+	border-radius: 50%;
+	border: 3px solid var(--border);
+	border-top-color: var(--accent);
+	animation: loading-spin .7s linear infinite;
+}
+
+@keyframes loading-spin {
+	to { transform: rotate(360deg); }
+}
+
 #headerProgress {
 	font-variant-numeric: tabular-nums;
 	font-size: 12px;

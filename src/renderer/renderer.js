@@ -45,6 +45,10 @@ function showMsg(msg) {
 	$('#txt').text(msg);
 }
 
+function setLoading(isLoading) {
+	$('#loadingOverlay').toggleClass('hidden', !isLoading);
+}
+
 function extname(p) {
 	var m = /\.[^./\\]+$/.exec(p);
 	return m ? m[0].toLowerCase() : '';
@@ -152,7 +156,9 @@ async function showImg(node) {
 	$('#pic').attr('src', '');
 	stopAutoScroll();
 
+	setLoading(true);
 	var res = await window.api.openArchive(src);
+	setLoading(false);
 	if (res.error) {
 		showMsg(res.error);
 		return;
@@ -241,7 +247,9 @@ async function chooseFile() {
 async function openPath() {
 	clean();
 	$('#chapterSearch').val('');
+	setLoading(true);
 	var res = await window.api.listDir(config.path);
+	setLoading(false);
 	if (res.error) {
 		showMsg(res.error);
 		return;
@@ -745,10 +753,9 @@ async function toggleFullscreen() {
 	await window.api.toggleFullscreen();
 }
 
-// drag & drop --------------------------------------------------------------------------
+// opening an external path: drag & drop, "open with", double-clicked file ------------------
 
-async function handleDroppedFile(file) {
-	var p = window.api.getDroppedPath(file);
+async function openExternalPath(p) {
 	var stat = await window.api.statPath(p);
 	if (stat.error) {
 		showMsg(stat.error);
@@ -769,6 +776,10 @@ async function handleDroppedFile(file) {
 			if (node) node.click();
 		}
 	}
+}
+
+async function handleDroppedFile(file) {
+	await openExternalPath(window.api.getDroppedPath(file));
 }
 
 function bindDragDrop() {
@@ -934,7 +945,12 @@ async function readConfig() {
 	document.documentElement.style.setProperty('--accent', config.accentColor);
 	applyKeybindings();
 	renderRecentList();
-	if (config.startupMode === 'fixed' && config.startupFolder) {
+
+	var launchPath = await window.api.getLaunchPath();
+	if (launchPath) {
+		openExternalPath(launchPath);
+	}
+	else if (config.startupMode === 'fixed' && config.startupFolder) {
 		config.path = config.startupFolder;
 		openPath();
 	}
@@ -947,6 +963,8 @@ function setWindow() {
 	window.api.onFullscreenChange(function (isFullscreen) {
 		$('body').toggleClass('immersive', isFullscreen);
 	});
+
+	window.api.onOpenPathRequest(function (p) { openExternalPath(p); });
 
 	window.api.onBeforeClose(function () {
 		stopAutoScroll();

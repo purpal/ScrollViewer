@@ -2,6 +2,8 @@
 <html>
 <head>
 	<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' comic:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none';">
+	<title>ScrollViewer2</title>
 	<link href="style.css" rel="stylesheet">
 </head>
 <body>
@@ -65,6 +67,9 @@
 			<span id="headerProgress"></span>
 			<div id="progressBar"></div>
 		</header>
+		<div id="loadingOverlay" class="loading-overlay hidden">
+			<div class="loading-spinner"></div>
+		</div>
 		<div class="content-row">
 			<div id="page">
 				<div id="picList" tabindex="1">
@@ -117,7 +122,7 @@
 
 <div id="my_help" class="overlay-panel">
 	<div class="overlay-card">
-		<h1>ScrollViewer 使用說明</h1>
+		<h1>ScrollViewer2 使用說明</h1>
 		<section class="help-block">
 			<h4>功能說明</h4>
 			<p>方便瀏覽電腦中的長條圖片，尤其是長條漫畫的分割壓縮檔。</p>

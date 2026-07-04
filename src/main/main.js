@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, protocol, Menu } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
@@ -6,20 +6,10 @@ const JSZip = require('jszip');
 const unrar = require('node-unrar-js');
 const UTIF = require('utif2');
 
-const TIFF_EXT = ['.tif', '.tiff'];
-const IMAGE_EXT = ['.bmp', '.jpg', '.jpeg', '.png', '.gif', '.webp', ...TIFF_EXT];
-const ARCHIVE_EXT = ['.zip', '.cbz', '.rar', '.cbr'];
-const SUPPORTED_EXT = [...IMAGE_EXT, ...ARCHIVE_EXT];
-const IMAGE_RE = /\.(bmp|jpe?g|png|gif|webp|tiff?)$/i;
-
-const MIME_TYPES = {
-	'.bmp': 'image/bmp',
-	'.jpg': 'image/jpeg',
-	'.jpeg': 'image/jpeg',
-	'.png': 'image/png',
-	'.gif': 'image/gif',
-	'.webp': 'image/webp',
-};
+const { TIFF_EXT, IMAGE_EXT, ARCHIVE_EXT, IMAGE_RE, MIME_TYPES } = require('./lib/file-types');
+const { declaredSize, checkArchiveBudget, selectImageEntries } = require('./lib/archive-utils');
+const { mergeConfig } = require('./lib/config-merge');
+const { classifyDirEntries } = require('./lib/folder-classify');
 
 const DEFAULT_KEYBINDINGS = {
 	prev: 'left',
@@ -39,6 +29,10 @@ const DEFAULT_KEYBINDINGS = {
 	autoScroll: 'a',
 	toggleSidebarHidden: 'mod+b',
 };
+
+// history/readMap are keyed by folder path and grow by one entry per folder
+// ever visited; cap them so years of use can't bloat config.json forever
+const MAX_HISTORY_ENTRIES = 300;
 
 const CONFIG_PATH = () => path.join(app.getPath('userData'), 'config.json');
 // history is keyed by folder path -> { file, vpos }, so it composes safely
@@ -83,6 +77,41 @@ protocol.registerSchemesAsPrivileged([
 	{ scheme: 'comic', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true } },
 ]);
 
+// Support "open with ScrollViewer2" / double-clicking a comic file or
+// folder: a path passed as a launch argument (Windows/Linux) or via
+// macOS's open-file event (which can fire before or after the window
+// exists) gets picked up and opened automatically.
+let pendingLaunchPath = null;
+
+function isExistingPath(p) {
+	try {
+		return typeof p === 'string' && p.length > 0 && fs.existsSync(p);
+	} catch (err) {
+		return false;
+	}
+}
+
+function getArgvLaunchPath(argv) {
+	const args = app.isPackaged ? argv.slice(1) : argv.slice(2);
+	for (const arg of args) {
+		if (arg.startsWith('-')) continue;
+		if (isExistingPath(arg)) return path.resolve(arg);
+	}
+	return null;
+}
+
+pendingLaunchPath = getArgvLaunchPath(process.argv);
+
+app.on('open-file', (event, filePath) => {
+	event.preventDefault();
+	if (win && !win.isDestroyed()) {
+		win.webContents.send('open-path-request', filePath);
+	}
+	else {
+		pendingLaunchPath = filePath;
+	}
+});
+
 // Multiple instances of the app can run at once and share the same config
 // file. Reading it fresh right before every merge means one instance's
 // change (e.g. dark mode) survives another instance's unrelated change
@@ -103,7 +132,26 @@ function readConfigFromDisk() {
 	}
 }
 
+// Renaming the app (package.json "name") changes Electron's userData
+// directory, since it's derived from app.name. Without this, everyone's
+// existing preferences/history would silently reset to defaults the first
+// time they run the renamed build.
+function migrateOldUserData() {
+	try {
+		const newPath = CONFIG_PATH();
+		if (fs.existsSync(newPath)) return;
+		const oldPath = path.join(path.dirname(path.dirname(newPath)), 'scrollviewer', 'config.json');
+		if (fs.existsSync(oldPath)) {
+			fs.mkdirSync(path.dirname(newPath), { recursive: true });
+			fs.copyFileSync(oldPath, newPath);
+		}
+	} catch (err) {
+		// best effort; falling back to a fresh config is acceptable
+	}
+}
+
 function loadConfig() {
+	migrateOldUserData();
 	config = readConfigFromDisk();
 }
 
@@ -178,13 +226,23 @@ function toDisplayItem(name, buffer) {
 	return { name, buffer, mime: MIME_TYPES[ext] || 'application/octet-stream' };
 }
 
+// guards against zip/rar bombs: a small archive file that expands to an
+// enormous amount of data or an enormous number of entries
+const MAX_ARCHIVE_FILE_SIZE = 500 * 1024 * 1024; // 500MB on disk
+const ARCHIVE_BUDGET = {
+	maxEntries: 2000,
+	maxTotalSize: 1024 * 1024 * 1024, // 1GB decompressed
+};
+
 // ---- reading pages: from a zip/cbz, a rar/cbr, or a plain directory of loose images ----
 
 async function extractZip(data) {
 	const zip = await JSZip.loadAsync(data);
-	const files = Object.values(zip.files)
-		.filter((f) => !f.dir && IMAGE_RE.test(f.name))
-		.sort((a, b) => a.name.localeCompare(b.name));
+	const files = selectImageEntries(Object.values(zip.files), { isDir: (f) => f.dir, nameOf: (f) => f.name });
+	// central-directory metadata already gives uncompressed sizes without
+	// having to decompress, so bombs can be rejected before doing real work
+	const totalSize = files.reduce((sum, f) => sum + declaredSize(f._data && f._data.uncompressedSize), 0);
+	checkArchiveBudget(files.length, totalSize, ARCHIVE_BUDGET);
 	const items = [];
 	for (const f of files) {
 		items.push(toDisplayItem(f.name, await f.async('nodebuffer')));
@@ -194,9 +252,12 @@ async function extractZip(data) {
 
 async function extractRar(data) {
 	const extractor = await unrar.createExtractorFromData({ data: toArrayBuffer(data) });
-	const headers = [...extractor.getFileList().fileHeaders]
-		.filter((h) => !h.flags.directory && IMAGE_RE.test(h.name))
-		.sort((a, b) => a.name.localeCompare(b.name));
+	const headers = selectImageEntries([...extractor.getFileList().fileHeaders], {
+		isDir: (h) => h.flags.directory,
+		nameOf: (h) => h.name,
+	});
+	const totalSize = headers.reduce((sum, h) => sum + declaredSize(h.unpSize), 0);
+	checkArchiveBudget(headers.length, totalSize, ARCHIVE_BUDGET);
 	const names = headers.map((h) => h.name);
 	const extracted = extractor.extract({ files: names });
 	const byName = new Map();
@@ -223,6 +284,7 @@ function createWindow() {
 	win = new BrowserWindow({
 		width: 900,
 		height: 950,
+		title: 'ScrollViewer2',
 		icon: path.join(__dirname, '..', '..', 'img', 'icon.png'),
 		webPreferences: {
 			preload: path.join(__dirname, 'preload.js'),
@@ -242,11 +304,44 @@ function createWindow() {
 		e.preventDefault();
 		win.webContents.send('app:before-close');
 	});
+
+	// the app menu is intentionally minimal (see buildAppMenu), so DevTools
+	// needs its own way in for troubleshooting
+	win.webContents.on('before-input-event', (event, input) => {
+		if (input.type === 'keyDown' && input.key === 'F12') {
+			win.webContents.toggleDevTools();
+		}
+	});
+}
+
+// Electron's default menu (Reload/Force Reload/Toggle DevTools/View/Window...)
+// is developer-facing clutter for a shipped app. Keep just Edit so native
+// Cut/Copy/Paste keyboard shortcuts keep working in text inputs (macOS in
+// particular routes those through menu roles, not the OS by itself).
+function buildAppMenu() {
+	const isMac = process.platform === 'darwin';
+	const template = [
+		...(isMac ? [{ role: 'appMenu' }] : []),
+		{
+			label: '編輯',
+			submenu: [
+				{ role: 'undo' }, { role: 'redo' }, { type: 'separator' },
+				{ role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },
+			],
+		},
+	];
+	return Menu.buildFromTemplate(template);
 }
 
 ipcMain.on('app:ready-to-close', () => {
 	allowClose = true;
 	win.close();
+});
+
+ipcMain.handle('app:get-launch-path', () => {
+	const p = pendingLaunchPath;
+	pendingLaunchPath = null;
+	return p;
 });
 
 ipcMain.handle('dialog:choose-folder', async () => {
@@ -258,8 +353,7 @@ ipcMain.handle('dialog:choose-folder', async () => {
 ipcMain.handle('fs:list-dir', async (event, dirPath) => {
 	try {
 		const dirents = await fs.promises.readdir(dirPath, { withFileTypes: true });
-		const entries = [];
-		const looseImages = [];
+		const items = [];
 
 		for (const d of dirents) {
 			const full = path.join(dirPath, d.name);
@@ -272,25 +366,23 @@ ipcMain.handle('fs:list-dir', async (event, dirPath) => {
 				}
 				if (!children.some((n) => IMAGE_RE.test(n))) continue;
 				const stat = await fs.promises.stat(full);
-				entries.push({ name: d.name, path: full, type: 'directory', mtime: stat.mtime.toISOString() });
+				items.push({ name: d.name, path: full, isDirectory: true, mtime: stat.mtime.toISOString() });
 				continue;
 			}
 			const ext = path.extname(d.name).toLowerCase();
-			if (ARCHIVE_EXT.includes(ext)) {
-				const stat = await fs.promises.stat(full);
-				entries.push({ name: d.name, path: full, type: 'archive', mtime: stat.mtime.toISOString() });
-			} else if (IMAGE_EXT.includes(ext)) {
-				looseImages.push({ name: d.name, path: full });
-			}
+			if (!ARCHIVE_EXT.includes(ext) && !IMAGE_EXT.includes(ext)) continue;
+			const stat = await fs.promises.stat(full);
+			items.push({
+				name: d.name,
+				path: full,
+				isDirectory: false,
+				isArchive: ARCHIVE_EXT.includes(ext),
+				isImage: IMAGE_EXT.includes(ext),
+				mtime: stat.mtime.toISOString(),
+			});
 		}
 
-		if (looseImages.length > 0) {
-			const stats = await Promise.all(looseImages.map((f) => fs.promises.stat(f.path)));
-			const mtime = new Date(Math.max(...stats.map((s) => s.mtime.getTime()))).toISOString();
-			const name = looseImages.length === 1 ? looseImages[0].name : path.basename(dirPath);
-			entries.push({ name, path: dirPath, type: 'directory', mtime });
-		}
-
+		const entries = classifyDirEntries(dirPath, path.basename(dirPath), items);
 		return { entries };
 	} catch (err) {
 		return { error: err.message };
@@ -313,6 +405,10 @@ ipcMain.handle('archive:open', async (event, targetPath) => {
 		if (stat.isDirectory()) {
 			items = await readDirImages(targetPath);
 		} else {
+			if (stat.size > MAX_ARCHIVE_FILE_SIZE) {
+				const mb = Math.round(stat.size / (1024 * 1024));
+				return { error: `Archive file is too large (${mb}MB > ${MAX_ARCHIVE_FILE_SIZE / (1024 * 1024)}MB)` };
+			}
 			const ext = path.extname(targetPath).toLowerCase();
 			const data = await fs.promises.readFile(targetPath);
 			if (ext === '.zip' || ext === '.cbz') {
@@ -339,13 +435,7 @@ ipcMain.handle('archive:open', async (event, targetPath) => {
 ipcMain.handle('config:get', () => config);
 ipcMain.handle('config:set', async (event, partial) => {
 	const onDisk = readConfigFromDisk();
-	config = {
-		...onDisk,
-		...partial,
-		keybindings: { ...onDisk.keybindings, ...(partial.keybindings || {}) },
-		history: { ...onDisk.history, ...(partial.history || {}) },
-		readMap: { ...onDisk.readMap, ...(partial.readMap || {}) },
-	};
+	config = mergeConfig(onDisk, partial, MAX_HISTORY_ENTRIES);
 	await saveConfig();
 	return config;
 });
@@ -375,6 +465,7 @@ app.whenReady().then(() => {
 		return new Response(item.buffer, { headers: { 'content-type': item.mime } });
 	});
 
+	Menu.setApplicationMenu(buildAppMenu());
 	loadConfig();
 	createWindow();
 
