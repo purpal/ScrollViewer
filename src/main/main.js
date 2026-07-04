@@ -37,15 +37,16 @@ const DEFAULT_KEYBINDINGS = {
 };
 
 const CONFIG_PATH = () => path.join(app.getPath('userData'), 'config.json');
+// history is keyed by folder path -> { file, vpos }, so it composes safely
+// across concurrently running instances browsing different folders.
 const DEFAULT_CONFIG = {
 	path: '',
 	sort: 'nameu',
-	vpos: 0,
-	lastfile: '',
 	history: {},
 	recent: [],
 	darkMode: false,
 	viewMode: 'strip',
+	gridViewEnabled: false,
 	zoomStep: 5,
 	keybindings: { ...DEFAULT_KEYBINDINGS },
 	showSidebarToolbar: true,
@@ -58,6 +59,7 @@ let config = { ...DEFAULT_CONFIG };
 let win;
 let allowClose = false;
 
+const MAX_CACHED_ARCHIVES = 4;
 let archiveCounter = 0;
 const archiveCache = new Map();
 
@@ -65,18 +67,27 @@ protocol.registerSchemesAsPrivileged([
 	{ scheme: 'comic', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true } },
 ]);
 
-function loadConfig() {
+// Multiple instances of the app can run at once and share the same config
+// file. Reading it fresh right before every merge means one instance's
+// change (e.g. dark mode) survives another instance's unrelated change
+// (e.g. zoom step) instead of being blindly clobbered by a stale snapshot.
+function readConfigFromDisk() {
 	try {
 		const data = fs.readFileSync(CONFIG_PATH(), 'utf-8');
 		const loaded = JSON.parse(data);
-		config = {
+		return {
 			...DEFAULT_CONFIG,
 			...loaded,
 			keybindings: { ...DEFAULT_KEYBINDINGS, ...(loaded.keybindings || {}) },
+			history: { ...(loaded.history || {}) },
 		};
 	} catch (err) {
-		config = { ...DEFAULT_CONFIG };
+		return { ...DEFAULT_CONFIG };
 	}
+}
+
+function loadConfig() {
+	config = readConfigFromDisk();
 }
 
 function saveConfig() {
@@ -295,11 +306,13 @@ ipcMain.handle('archive:open', async (event, targetPath) => {
 				return { error: 'Unsupported archive format: ' + ext };
 			}
 		}
-		archiveCache.clear();
 		// prefixed with a letter so the WHATWG URL parser doesn't coerce a
 		// purely-numeric host into IPv4 dotted notation (e.g. "1" -> "0.0.0.1")
 		const sessionId = 's' + (++archiveCounter);
 		archiveCache.set(sessionId, items);
+		while (archiveCache.size > MAX_CACHED_ARCHIVES) {
+			archiveCache.delete(archiveCache.keys().next().value);
+		}
 		return { sessionId, entries: items.map((it, index) => ({ index, name: it.name })) };
 	} catch (err) {
 		return { error: err.message };
@@ -308,16 +321,19 @@ ipcMain.handle('archive:open', async (event, targetPath) => {
 
 ipcMain.handle('config:get', () => config);
 ipcMain.handle('config:set', async (event, partial) => {
+	const onDisk = readConfigFromDisk();
 	config = {
-		...config,
+		...onDisk,
 		...partial,
-		keybindings: { ...config.keybindings, ...(partial.keybindings || {}) },
+		keybindings: { ...onDisk.keybindings, ...(partial.keybindings || {}) },
+		history: { ...onDisk.history, ...(partial.history || {}) },
 	};
 	await saveConfig();
 	return config;
 });
 ipcMain.handle('config:reset-keybindings', async () => {
-	config = { ...config, keybindings: { ...DEFAULT_KEYBINDINGS } };
+	const onDisk = readConfigFromDisk();
+	config = { ...onDisk, keybindings: { ...DEFAULT_KEYBINDINGS } };
 	await saveConfig();
 	return config;
 });

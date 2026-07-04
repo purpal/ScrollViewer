@@ -58,16 +58,35 @@ function removeSimg() {
 	$('.simg').remove();
 }
 
+// Multiple instances of the app may run at once and share config.json.
+// patchConfig only ever sends the fields that actually changed (never a
+// full snapshot of local state), so one instance's change can't clobber
+// another instance's unrelated change when both save around the same time.
+function patchConfig(partial) {
+	Object.keys(partial).forEach(function (key) {
+		if (key === 'keybindings' || key === 'history') {
+			config[key] = Object.assign({}, config[key], partial[key]);
+		}
+		else {
+			config[key] = partial[key];
+		}
+	});
+	return window.api.setConfig(partial);
+}
+
+function patchHistory(folderPath, fields) {
+	var merged = Object.assign({}, config.history[folderPath], fields);
+	var patch = {};
+	patch[folderPath] = merged;
+	return patchConfig({ history: patch });
+}
+
 function updateHistory(src) {
-	config.history[config.path] = src;
+	patchHistory(config.path, { file: src });
 }
 
-function readHistory() {
-	return config.history[config.path];
-}
-
-function persistConfig() {
-	window.api.setConfig(config);
+function currentHistoryEntry() {
+	return config.history[config.path] || {};
 }
 
 function saveCurr() {
@@ -142,7 +161,7 @@ function switchToStripAndScroll(el) {
 function makeReLocal(reSort) {
 	sortList();
 	var refi = -1;
-	var history = readHistory();
+	var historyEntry = currentHistoryEntry();
 	$('#titleList').empty();
 	reList.forEach(function (entry, index) {
 		var div = document.createElement('div');
@@ -150,7 +169,7 @@ function makeReLocal(reSort) {
 		div.className = 'ti';
 		div.tabIndex = index + 10;
 		div.dataset.url = entry.path;
-		div.dataset.vpos = (config.lastfile === entry.path) ? (config.vpos || 0) : 0;
+		div.dataset.vpos = (historyEntry.file === entry.path) ? (historyEntry.vpos || 0) : 0;
 		div.appendChild(makeIconNode(entry.type === 'archive' ? ICON_ARCHIVE_SVG : ICON_FOLDER_SVG));
 		var label = document.createElement('span');
 		label.textContent = stripExt(entry.name);
@@ -159,7 +178,7 @@ function makeReLocal(reSort) {
 		document.getElementById('titleList').appendChild(div);
 
 		if (reSort !== true) {
-			if (config.lastfile === entry.path || history === entry.path) refi = index;
+			if (historyEntry.file === entry.path) refi = index;
 		}
 		else if ($('#txt').text() === entry.name) {
 			refi = index;
@@ -203,7 +222,7 @@ function addRecent(p) {
 	config.recent = (config.recent || []).filter(function (r) { return r !== p; });
 	config.recent.unshift(p);
 	if (config.recent.length > RECENT_LIMIT) config.recent.length = RECENT_LIMIT;
-	persistConfig();
+	patchConfig({ recent: config.recent, path: p });
 	renderRecentList();
 }
 
@@ -225,8 +244,7 @@ function renderRecentList() {
 
 function openRecent() {
 	$('#sidebar').addClass('expanded');
-	config.sidebarCollapsed = false;
-	persistConfig();
+	patchConfig({ sidebarCollapsed: false });
 	var el = document.getElementById('recentSection');
 	if (el) el.scrollIntoView({ block: 'nearest' });
 }
@@ -234,9 +252,8 @@ function openRecent() {
 // sidebar / navigation --------------------------------------------------------------------
 
 function toggleSidebar() {
-	config.sidebarCollapsed = !config.sidebarCollapsed;
+	patchConfig({ sidebarCollapsed: !config.sidebarCollapsed });
 	applySidebarState();
-	persistConfig();
 }
 
 function applySidebarState() {
@@ -298,6 +315,7 @@ function renderHelpHotkeys() {
 	var list = $('#helpHotkeyList');
 	list.empty();
 	Object.keys(ACTION_LABELS).forEach(function (action) {
+		if (action === 'gridView' && !config.gridViewEnabled) return;
 		var label = document.createElement('div');
 		label.textContent = ACTION_LABELS[action];
 		var key = document.createElement('div');
@@ -335,9 +353,8 @@ function renderAccentSwatches() {
 }
 
 function setAccent(color) {
-	config.accentColor = color;
 	document.documentElement.style.setProperty('--accent', color);
-	persistConfig();
+	patchConfig({ accentColor: color });
 }
 
 function eventToCombo(e) {
@@ -380,7 +397,6 @@ function startCapture(action, btn) {
 	if (capturingAction) return;
 	capturingAction = action;
 	btn.classList.add('capturing');
-	var prevText = btn.textContent;
 	btn.textContent = '按下按鍵…';
 
 	function onKey(e) {
@@ -389,8 +405,9 @@ function startCapture(action, btn) {
 		if (e.key === 'Escape') { finish(); return; }
 		var combo = eventToCombo(e);
 		if (!combo) return;
-		config.keybindings[action] = combo;
-		persistConfig();
+		var patch = {};
+		patch[action] = combo;
+		patchConfig({ keybindings: patch });
 		applyKeybindings();
 		finish();
 	}
@@ -408,11 +425,19 @@ function applyToolbarVisibility() {
 	$('body').toggleClass('hide-floating-nav', !config.showFloatingNav);
 }
 
+function applyGridAvailability() {
+	$('#btnGrid').toggle(!!config.gridViewEnabled);
+	if (!config.gridViewEnabled && config.viewMode === 'grid') {
+		setViewMode('strip');
+	}
+}
+
 function openPrefs() {
 	$('#prefDarkMode').prop('checked', !!config.darkMode);
 	$('#prefZoomStep').val(config.zoomStep);
 	$('#prefShowSidebarToolbar').prop('checked', !!config.showSidebarToolbar);
 	$('#prefShowFloatingNav').prop('checked', !!config.showFloatingNav);
+	$('#prefGridViewEnabled').prop('checked', !!config.gridViewEnabled);
 	renderAccentSwatches();
 	renderKeybindList();
 	$('#prefsPanel').addClass('visible');
@@ -435,19 +460,19 @@ function applyDarkMode(on) {
 }
 
 function toggleDark() {
-	config.darkMode = !config.darkMode;
+	patchConfig({ darkMode: !config.darkMode });
 	applyDarkMode(config.darkMode);
-	persistConfig();
 }
 
 function setViewMode(mode) {
-	config.viewMode = mode;
+	if (mode === 'grid' && !config.gridViewEnabled) return;
+	patchConfig({ viewMode: mode });
 	$('#picList').toggleClass('grid-view', mode === 'grid');
 	if (mode === 'strip') setScale();
-	persistConfig();
 }
 
 function toggleGrid() {
+	if (!config.gridViewEnabled) return;
 	setViewMode(config.viewMode === 'grid' ? 'strip' : 'grid');
 }
 
@@ -533,8 +558,7 @@ function applyKeybindings() {
 
 function bindSort() {
 	$('input[name=sort]').change(function () {
-		config.sort = this.value;
-		persistConfig();
+		patchConfig({ sort: this.value });
 		$('#titleList').empty();
 		makeReLocal(true);
 	});
@@ -572,19 +596,20 @@ function bindButtons() {
 	$('#prefZoomStep').on('change', function () {
 		var v = parseInt(this.value, 10);
 		if (!isFinite(v) || v < 1) v = 1;
-		config.zoomStep = v;
 		this.value = v;
-		persistConfig();
+		patchConfig({ zoomStep: v });
 	});
 	$('#prefShowSidebarToolbar').on('change', function () {
-		config.showSidebarToolbar = this.checked;
+		patchConfig({ showSidebarToolbar: this.checked });
 		applyToolbarVisibility();
-		persistConfig();
 	});
 	$('#prefShowFloatingNav').on('change', function () {
-		config.showFloatingNav = this.checked;
+		patchConfig({ showFloatingNav: this.checked });
 		applyToolbarVisibility();
-		persistConfig();
+	});
+	$('#prefGridViewEnabled').on('change', function () {
+		patchConfig({ gridViewEnabled: this.checked });
+		applyGridAvailability();
 	});
 }
 
@@ -592,7 +617,8 @@ async function readConfig() {
 	config = await window.api.getConfig();
 	$('input[name=sort][value=' + config.sort + ']').prop('checked', true);
 	applyDarkMode(config.darkMode);
-	setViewMode(config.viewMode || 'strip');
+	applyGridAvailability();
+	setViewMode(config.viewMode === 'grid' && config.gridViewEnabled ? 'grid' : 'strip');
 	applySidebarState();
 	applyToolbarVisibility();
 	document.documentElement.style.setProperty('--accent', config.accentColor);
@@ -608,10 +634,12 @@ function setWindow() {
 
 	window.api.onBeforeClose(function () {
 		if (curr) {
-			config.lastfile = curr.dataset.url;
-			config.vpos = $('#page').scrollTop();
+			patchHistory(config.path, { file: curr.dataset.url, vpos: $('#page').scrollTop() })
+				.then(function () { window.api.readyToClose(); });
 		}
-		window.api.setConfig(config).then(function () { window.api.readyToClose(); });
+		else {
+			window.api.readyToClose();
+		}
 	});
 }
 
