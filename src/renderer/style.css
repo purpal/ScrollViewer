@@ -331,6 +331,9 @@ body.dark .icon-btn:hover {
 
 body.hide-floating-nav .floating-nav { display: none !important; }
 
+body.hide-progress #headerProgress,
+body.hide-progress #progressBar { display: none; }
+
 #zoomPercent {
 	width: 46px;
 	text-align: center;

@@ -512,6 +512,10 @@ function applyMinimapVisibility() {
 	}
 }
 
+function applyProgressVisibility() {
+	$('body').toggleClass('hide-progress', !config.showProgress);
+}
+
 // overlays: help / preferences ------------------------------------------------------------
 
 function formatCombo(combo) {
@@ -696,6 +700,7 @@ function openPrefs() {
 	$('#prefShowFloatingNav').prop('checked', !!config.showFloatingNav);
 	$('#prefGridViewEnabled').prop('checked', !!config.gridViewEnabled);
 	$('#prefShowMinimap').prop('checked', !!config.showMinimap);
+	$('#prefShowProgress').prop('checked', !!config.showProgress);
 	renderAccentSwatches();
 	renderDarkShadeSwatches();
 	renderSidebarPositionSwatches();
@@ -905,6 +910,10 @@ function bindButtons() {
 		patchConfig({ showMinimap: this.checked });
 		applyMinimapVisibility();
 	});
+	$('#prefShowProgress').on('change', function () {
+		patchConfig({ showProgress: this.checked });
+		applyProgressVisibility();
+	});
 }
 
 async function readConfig() {
@@ -920,6 +929,7 @@ async function readConfig() {
 	applyToolbarVisibility();
 	applyMaxContentWidth();
 	applyMinimapVisibility();
+	applyProgressVisibility();
 	$('#fitwidth_icon').toggleClass('active', config.zoomMode === 'fit');
 	document.documentElement.style.setProperty('--accent', config.accentColor);
 	applyKeybindings();

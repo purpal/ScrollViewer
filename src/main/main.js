@@ -61,6 +61,7 @@ const DEFAULT_CONFIG = {
 	autoScrollSpeed: 40,
 	maxContentWidth: 0,
 	showMinimap: false,
+	showProgress: true,
 	keybindings: { ...DEFAULT_KEYBINDINGS },
 	showSidebarToolbar: true,
 	showFloatingNav: true,
