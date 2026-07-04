@@ -1,0 +1,11 @@
+{
+	"name": "scroll.viewer",
+	"main": "index.html",
+	"window": {
+		"id": "scroll.viewer",
+		"title": "ScrollViewer v1.0",
+		"width": 800,
+		"height": 950,
+		"icon": "img/icon.png"
+	}
+}

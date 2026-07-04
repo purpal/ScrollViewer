@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+	<link href="style.css" rel="stylesheet">
+	<script type="text/javascript" src="js/jquery-1.7.2.js"></script>
+	<script type="text/javascript" src="js/jszip.min.js"></script>
+	<script type="text/javascript" src="js/mousetrap.min.js"></script>
+	<script type="text/javascript" src="js/main.js"></script>
+	<script type="text/javascript" src="js/network.js"></script>
+</head>
+<body>
+	
+<div id="my_slider_menu" class="round_right">
+	<div id="my_slider_icon"><center>
+		<img id="menu_icon" src="img/menu.png" class="btn round_right round_left" onclick="nailSlider();" title="功能表">
+	</center></div>
+</div>
+<div id="my_slider_scroll" class="round_right">
+	<input style="display:none;" id="fileDialog" type="file" nwdirectory />
+	<div id="my_slider_toolbar">
+		<img src="img/folder.png" class="btn round_right round_left" onclick="chooseFile();" title="本地端檔案">
+		<img id="btnHelp" src="img/help.png" class="btn round_right round_left" onclick="showHelp();" title="說明">
+		<br><br>
+		<label>排序：</label>
+	<input type="radio" name="sort" value="nameu" id="snu" checked><label for="snu">名稱▲</label>　
+		<input type="radio" name="sort" value="named" id="snd"><label for="snd">名稱▼</label>　
+		<input type="radio" name="sort" value="time" id="stm"><label for="stm">更新時間</label>
+		<br><br>
+	</div>
+	<div id="my_slider_content">
+		<div id="titleList"></div>
+	</div>
+</div>
+<div id="page">
+	<center>
+		<div id="my_help">
+			<div>
+				<center><h1>ScrollViewer v1.0 使用說明</h1></center>
+				<div class="help">
+					【功能說明】 <br>
+					　方便瀏覽電腦中的長條圖片，尤其是長條漫畫的分割壓縮檔。
+				</div>
+				<div class="help">
+					【使用方法】 <br>
+					　按 [本地端檔案] 選定資料夾，清單中會列出資料夾下的圖檔，<br>
+					　點選清單選擇檔案瀏覽。
+				</div>
+				<div class="help">
+					【檔案格式】 <br>
+					　支援 .bmp檔, .gif檔, .jpg檔, .png檔, .zip檔 <br>
+					　顯示.zip檔時，會將壓縮檔中的圖片串成長條圖，方便滾動瀏覽。
+				</div>
+				<div class="help">
+					【圖示與快速鍵】 <br>
+					<div class="help_item">
+						<img src="img/menu.png" class="help_img"> ： 選單列，點擊可釘選
+					</div>
+					<div class="help_item">
+						<img src="img/folder.png" class="help_img"> ： 開啟資料夾  ( 快速鍵：Ctrl + O )
+					</div>
+					<div class="help_item">
+						<img src="img/help.png" class="help_img"> ： 使用說明  ( 快速鍵：F1 )
+					</div>
+					<div class="help_item">
+						<img src="img/prev.png" class="help_img"> ： 上一話  ( 快速鍵：← )
+					</div>
+					<div class="help_item">
+						<img src="img/next.png" class="help_img"> ： 下一話  ( 快速鍵：→ )
+					</div>
+					<div class="help_item">
+						<img src="img/gotop.png" class="help_img"> ： 回到頂端 ( 快速鍵：Home )
+					</div>
+					<div class="help_item">
+						<img src="img/zoomin.png" class="help_img"> ： 放大  ( 快速鍵：+ )
+					</div>
+					<div class="help_item">
+						<img src="img/zoomout.png" class="help_img"> ： 縮小  ( 快速鍵：- )
+					</div>
+					<div class="help_item">
+						<img src="img/original.png" class="help_img"> ： 原始大小  ( 快速鍵：= 或 Enter )
+					</div>
+				</div>	
+				<div class="help help_center">
+					Author: Purpal@ptt.cc
+				</div>
+				<div class="help help_center">
+					<a href="#" onclick="hideHelp();">[　離開　]</a>
+				</div>
+			</div>
+		</div>
+		<div id="my_header">
+			<div id="txt"></div>
+		</div>
+		<div id="picList" tabindex="1">
+			<img id="pic" class="fimg" src="">
+		</div>
+		<div id="my_nav" class="round_left round_right">
+			<div>
+				<img id="prev_icon" src="img/prev.png" class="btn round_right round_left" onclick="myPrev();" title="上一話">
+				<img id="top_icon" src="img/gotop.png" class="btn round_right round_left" onclick="myTop();" title="回到頂端">
+				<img id="next_icon" src="img/next.png" class="btn round_right round_left" onclick="myNext();" title="下一話">
+			</div>
+			<div>
+				<img id="zoomout_icon" src="img/zoomout.png" class="btn round_right round_left" onclick="zoomOut();" title="縮小">
+				<img id="original_icon" src="img/original.png" class="btn round_right round_left" onclick="zoomOrig();" title="原始大小">
+				<img id="zoomin_icon" src="img/zoomin.png" class="btn round_right round_left" onclick="zoomIn();" title="放大">
+			</div>
+		</div>
+	</center>
+</div>
+
+</body>
+</html>
