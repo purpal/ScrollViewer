@@ -667,7 +667,24 @@ function applyGridAvailability() {
 	}
 }
 
+function updateStartupFolderDisplay() {
+	$('#startupFolderPath').text(config.startupFolder || '未設定（預設回到上次開啟的資料夾）');
+}
+
+async function chooseStartupFolder() {
+	var dir = await window.api.chooseFolder();
+	if (!dir) return;
+	patchConfig({ startupFolder: dir });
+	updateStartupFolderDisplay();
+}
+
+function clearStartupFolder() {
+	patchConfig({ startupFolder: '' });
+	updateStartupFolderDisplay();
+}
+
 function openPrefs() {
+	updateStartupFolderDisplay();
 	$('#prefDarkMode').prop('checked', !!config.darkMode);
 	$('#prefZoomStep').val(config.zoomStep);
 	$('#prefAutoScrollSpeed').val(config.autoScrollSpeed);
@@ -826,6 +843,8 @@ function bindButtons() {
 	$('#btnClosePrefs').click(closePrefs);
 	$('#prefsPanel').on('mousedown', function (e) { if (e.target === this) closePrefs(); });
 	$('#btnResetKeybindings').click(resetKeybindings);
+	$('#btnChooseStartupFolder').click(chooseStartupFolder);
+	$('#btnClearStartupFolder').click(clearStartupFolder);
 	$('#prev_icon').click(myPrev);
 	$('#top_icon').click(myTop);
 	$('#next_icon').click(myNext);
@@ -902,7 +921,13 @@ async function readConfig() {
 	document.documentElement.style.setProperty('--accent', config.accentColor);
 	applyKeybindings();
 	renderRecentList();
-	if (config.path) openPath();
+	if (config.startupFolder) {
+		config.path = config.startupFolder;
+		openPath();
+	}
+	else if (config.path) {
+		openPath();
+	}
 }
 
 function setWindow() {
