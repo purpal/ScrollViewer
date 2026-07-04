@@ -20,6 +20,20 @@ body.dark {
 	--shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
 }
 
+body.dark.dark-shade-darkgray {
+	--bg: #202225;
+	--bg-elevated: #2a2d31;
+	--sidebar-bg: #26282b;
+	--border: #3a3d42;
+}
+
+body.dark.dark-shade-gray {
+	--bg: #2e3033;
+	--bg-elevated: #383a3d;
+	--sidebar-bg: #343639;
+	--border: #46484c;
+}
+
 * { box-sizing: border-box; }
 
 :focus { outline: none; }
@@ -50,6 +64,28 @@ body.dark ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); }
 	display: flex;
 	height: 100vh;
 	overflow: hidden;
+}
+
+body.sidebar-right #app {
+	flex-direction: row-reverse;
+}
+
+body.sidebar-right .sidebar {
+	border-right: none;
+	border-left: 1px solid var(--border);
+}
+
+body.sidebar-right .sidebar-panel {
+	border-left: none;
+	border-right: 1px solid transparent;
+}
+
+body.sidebar-right .sidebar.expanded .sidebar-panel {
+	border-right-color: var(--border);
+}
+
+body.sidebar-hidden .sidebar {
+	display: none;
 }
 
 .sidebar {
@@ -122,11 +158,37 @@ body.hide-sidebar-toolbar .sidebar-rail .icon-btn:not(#btnToggleSidebar) {
 	flex-shrink: 0;
 	display: flex;
 	align-items: center;
+	justify-content: space-between;
 	padding: 0 20px;
 	font-size: 13px;
 	color: var(--text-muted);
 	background: var(--bg-elevated);
 	border-bottom: 1px solid var(--border);
+	position: relative;
+}
+
+#headerProgress {
+	font-variant-numeric: tabular-nums;
+	font-size: 12px;
+	color: var(--text-muted);
+	flex-shrink: 0;
+}
+
+#progressBar {
+	position: absolute;
+	left: 0;
+	bottom: -1px;
+	height: 2px;
+	width: 0%;
+	background: var(--accent);
+	transition: width .1s linear;
+}
+
+.content-row {
+	flex: 1;
+	display: flex;
+	overflow: hidden;
+	min-height: 0;
 }
 
 #page {
@@ -139,6 +201,7 @@ body.hide-sidebar-toolbar .sidebar-rail .icon-btn:not(#btnToggleSidebar) {
 #picList {
 	margin: 24px 0 40px;
 	height: fit-content;
+	max-width: var(--max-content-width, none);
 }
 
 #picList.grid-view {
@@ -156,6 +219,43 @@ body.hide-sidebar-toolbar .sidebar-rail .icon-btn:not(#btnToggleSidebar) {
 	height: auto;
 	border-radius: 8px;
 	cursor: pointer;
+}
+
+/* ---- minimap ---- */
+
+#minimap {
+	display: none;
+	position: relative;
+	width: 56px;
+	flex-shrink: 0;
+	overflow: hidden;
+	background: var(--bg-elevated);
+	border-left: 1px solid var(--border);
+	cursor: pointer;
+}
+
+body.show-minimap #minimap {
+	display: block;
+}
+
+#minimapStrip {
+	width: 100%;
+}
+
+#minimapStrip img {
+	width: 100%;
+	height: auto;
+	display: block;
+}
+
+#minimapViewport {
+	position: absolute;
+	left: 0;
+	width: 100%;
+	background: rgba(83, 196, 198, 0.25);
+	border-top: 2px solid var(--accent);
+	border-bottom: 2px solid var(--accent);
+	pointer-events: none;
 }
 
 /* ---- icon buttons ---- */
@@ -227,8 +327,22 @@ body.dark .icon-btn:hover {
 
 .floating-nav .icon-btn { color: rgba(255, 255, 255, 0.85); }
 .floating-nav .icon-btn:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
+.floating-nav .icon-btn.active { background: rgba(83, 196, 198, 0.35); color: #fff; }
 
 body.hide-floating-nav .floating-nav { display: none !important; }
+
+#zoomPercent {
+	width: 46px;
+	text-align: center;
+	background: transparent;
+	border: none;
+	color: rgba(255, 255, 255, 0.85);
+	font-size: 12.5px;
+	font-variant-numeric: tabular-nums;
+	cursor: text;
+	align-self: center;
+}
+#zoomPercent:focus { color: #fff; }
 
 /* ---- file list ---- */
 
@@ -269,6 +383,37 @@ body.dark .ti:hover { background: rgba(255, 255, 255, 0.06); }
 	fill: none;
 	stroke-width: 2;
 	opacity: .75;
+}
+
+.ti.read:not(.active) {
+	color: var(--text-muted);
+}
+
+.ti-read-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--accent);
+	flex-shrink: 0;
+	margin-left: auto;
+}
+
+.ti-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* ---- chapter search ---- */
+
+#chapterSearch {
+	width: 100%;
+	padding: 6px 10px;
+	border-radius: 8px;
+	border: 1px solid var(--border);
+	background: var(--bg);
+	color: var(--text);
+	font-size: 12.5px;
+	margin-bottom: 10px;
 }
 
 /* ---- recent list ---- */
@@ -438,6 +583,21 @@ body.dark .radio-pill:hover { background: rgba(255, 255, 255, 0.06); }
 	padding: 0;
 }
 .swatch.active { border-color: var(--text); }
+
+.swatch-label {
+	width: auto;
+	height: auto;
+	border-radius: 8px;
+	padding: 5px 12px;
+	font-size: 12.5px;
+	background: var(--bg);
+	border: 1px solid var(--border);
+	color: var(--text);
+}
+.swatch-label.active {
+	border-color: var(--accent);
+	color: var(--accent);
+}
 
 .keybind-list {
 	display: flex;

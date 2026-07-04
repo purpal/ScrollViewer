@@ -34,25 +34,38 @@ const DEFAULT_KEYBINDINGS = {
 	gridView: 'mod+g',
 	fullscreen: 'f11',
 	preferences: 'mod+,',
+	pageDown: 'space',
+	pageUp: 'shift+space',
+	autoScroll: 'a',
+	toggleSidebarHidden: 'mod+b',
 };
 
 const CONFIG_PATH = () => path.join(app.getPath('userData'), 'config.json');
 // history is keyed by folder path -> { file, vpos }, so it composes safely
 // across concurrently running instances browsing different folders.
+// readMap is keyed by folder path -> { [filePath]: true }, same reasoning.
 const DEFAULT_CONFIG = {
 	path: '',
 	sort: 'nameu',
 	history: {},
+	readMap: {},
 	recent: [],
 	darkMode: false,
+	darkShade: 'black',
 	viewMode: 'strip',
 	gridViewEnabled: false,
 	zoomStep: 5,
+	zoomMode: 'manual',
+	autoScrollSpeed: 40,
+	maxContentWidth: 0,
+	showMinimap: false,
 	keybindings: { ...DEFAULT_KEYBINDINGS },
 	showSidebarToolbar: true,
 	showFloatingNav: true,
 	accentColor: '#53c4c6',
 	sidebarCollapsed: true,
+	sidebarHidden: false,
+	sidebarPosition: 'left',
 };
 
 let config = { ...DEFAULT_CONFIG };
@@ -80,6 +93,7 @@ function readConfigFromDisk() {
 			...loaded,
 			keybindings: { ...DEFAULT_KEYBINDINGS, ...(loaded.keybindings || {}) },
 			history: { ...(loaded.history || {}) },
+			readMap: { ...(loaded.readMap || {}) },
 		};
 	} catch (err) {
 		return { ...DEFAULT_CONFIG };
@@ -327,6 +341,7 @@ ipcMain.handle('config:set', async (event, partial) => {
 		...partial,
 		keybindings: { ...onDisk.keybindings, ...(partial.keybindings || {}) },
 		history: { ...onDisk.history, ...(partial.history || {}) },
+		readMap: { ...onDisk.readMap, ...(partial.readMap || {}) },
 	};
 	await saveConfig();
 	return config;
