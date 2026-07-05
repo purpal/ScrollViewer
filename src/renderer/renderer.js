@@ -26,6 +26,9 @@ const SIDEBAR_POSITIONS = [['left', '左'], ['right', '右']];
 const ICON_FOLDER_SVG = '<svg viewBox="0 0 24 24" class="ti-icon"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>';
 const ICON_ARCHIVE_SVG = '<svg viewBox="0 0 24 24" class="ti-icon"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v2a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1V9"/></svg>';
 
+const ICON_MOON_SVG = '<svg viewBox="0 0 24 24" class="icon"><path d="M20 12.8A8 8 0 1 1 11.2 4 6.4 6.4 0 0 0 20 12.8z"/></svg>';
+const ICON_SUN_SVG = '<svg viewBox="0 0 24 24" class="icon"><circle cx="12" cy="12" r="3.2"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/><line x1="4.9" y1="4.9" x2="7" y2="7"/><line x1="17" y1="17" x2="19.1" y2="19.1"/><line x1="4.9" y1="19.1" x2="7" y2="17"/><line x1="17" y1="7" x2="19.1" y2="4.9"/></svg>';
+
 var config;
 var curr = null;
 var reList = null;
@@ -38,6 +41,7 @@ var currentPageCount = 0;
 var autoScrollActive = false;
 var autoScrollRAF = null;
 var autoScrollLastTime = null;
+var autoScrollPosition = 0;
 
 //------------------------------------------------------------------------------------------
 
@@ -377,10 +381,15 @@ function updateZoomPercentDisplay() {
 	$('#zoomPercent').val(config.zoomMode === 'fit' ? 'Fit' : (Math.round(scale || 100) + '%'));
 }
 
+function clampToMaxContentWidth(w) {
+	var max = config.maxContentWidth;
+	return (max && max > 0) ? Math.min(w, max) : w;
+}
+
 function setScale() {
 	if (config.viewMode === 'grid') return;
 	if (config.zoomMode === 'fit') {
-		var containerWidth = Math.floor($('#page').width()) - 4;
+		var containerWidth = clampToMaxContentWidth(Math.floor($('#page').width()) - 4);
 		$('#pic').width(containerWidth);
 		$('.simg').each(function () { $(this).width(containerWidth); });
 		$('#picList').width(containerWidth);
@@ -388,7 +397,7 @@ function setScale() {
 		return;
 	}
 	scale = (scale === undefined) ? 100 : scale;
-	var w = Math.floor(origWidth * scale / 100);
+	var w = clampToMaxContentWidth(Math.floor(origWidth * scale / 100));
 	$('#pic').width(w);
 	$('.simg').each(function () { $(this).width(w); });
 	$('#picList').width(w);
@@ -453,6 +462,7 @@ function toggleAutoScroll() {
 function startAutoScroll() {
 	autoScrollActive = true;
 	$('#autoscroll_icon').addClass('active');
+	autoScrollPosition = document.getElementById('page').scrollTop;
 	autoScrollLastTime = performance.now();
 	autoScrollRAF = requestAnimationFrame(autoScrollStep);
 }
@@ -468,7 +478,11 @@ function autoScrollStep(now) {
 	var page = document.getElementById('page');
 	var dt = (now - autoScrollLastTime) / 1000;
 	autoScrollLastTime = now;
-	page.scrollTop += (config.autoScrollSpeed || 40) * dt;
+	// scrollTop rounds to whole pixels, so accumulating in a separate float
+	// avoids losing sub-pixel deltas every frame (a fixed 40px/s at 60fps is
+	// only ~0.67px/frame, which would otherwise never move the scrollbar)
+	autoScrollPosition += (config.autoScrollSpeed || 40) * dt;
+	page.scrollTop = autoScrollPosition;
 	if (page.scrollTop >= page.scrollHeight - page.clientHeight - 2) {
 		stopAutoScroll();
 		return;
@@ -526,8 +540,15 @@ function applyProgressVisibility() {
 
 // overlays: help / preferences ------------------------------------------------------------
 
+var IS_MAC = /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+
 function formatCombo(combo) {
-	return (combo || '').split('+').map(function (p) { return p.charAt(0).toUpperCase() + p.slice(1); }).join(' + ');
+	// Mousetrap resolves 'mod' to Cmd on macOS and Ctrl elsewhere by itself;
+	// the display needs the same platform-specific translation
+	return (combo || '').split('+').map(function (p) {
+		if (p === 'mod') return IS_MAC ? 'Cmd' : 'Ctrl';
+		return p.charAt(0).toUpperCase() + p.slice(1);
+	}).join(' + ');
 }
 
 function renderHelpHotkeys() {
@@ -730,6 +751,7 @@ async function resetKeybindings() {
 
 function applyDarkMode(on) {
 	$('body').toggleClass('dark', !!on);
+	$('#btnDark').html(on ? ICON_SUN_SVG : ICON_MOON_SVG);
 }
 
 function toggleDark() {
@@ -843,9 +865,12 @@ function bindSort() {
 }
 
 function bindFloatingNavReveal() {
-	$('#picList').mouseover(function () { $('#floatingNav').css({ opacity: 0.9, pointerEvents: 'auto' }); });
+	// class toggle rather than jQuery's .css({opacity: ...}): jQuery 1.7.2's
+	// legacy opacity cssHook misfires under modern Chromium (sets a stray
+	// "zoom: 1" IE hasLayout hack but never actually applies the opacity)
+	$('#picList').mouseover(function () { $('#floatingNav').addClass('visible'); });
 	$('#picList').mouseleave(function () {
-		if ($('#floatingNav:hover').length <= 0) $('#floatingNav').css({ opacity: 0, pointerEvents: 'none' });
+		if ($('#floatingNav:hover').length <= 0) $('#floatingNav').removeClass('visible');
 	});
 }
 
