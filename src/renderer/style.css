@@ -222,6 +222,9 @@ body.hide-sidebar-toolbar .sidebar-rail .icon-btn:not(#btnToggleSidebar) {
 #page {
 	flex: 1;
 	overflow: auto;
+	/* reserves a matching gutter on both sides so the vertical scrollbar
+	   (right side only) can't pull the centered content off-center */
+	scrollbar-gutter: stable both-edges;
 	display: flex;
 	justify-content: center;
 }
@@ -342,6 +345,11 @@ body.dark .icon-btn:hover {
 	opacity: 0;
 	pointer-events: none;
 	transition: opacity .2s ease;
+}
+
+.floating-nav.visible {
+	opacity: 0.9;
+	pointer-events: auto;
 }
 
 .nav-group {

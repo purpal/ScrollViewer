@@ -24,9 +24,9 @@ const DEFAULT_KEYBINDINGS = {
 	gridView: 'mod+g',
 	fullscreen: 'f11',
 	preferences: 'mod+,',
-	pageDown: 'space',
-	pageUp: 'shift+space',
-	autoScroll: 'a',
+	pageDown: 'pagedown',
+	pageUp: 'pageup',
+	autoScroll: 'space',
 	toggleSidebarHidden: 'mod+b',
 };
 
@@ -315,21 +315,14 @@ function createWindow() {
 }
 
 // Electron's default menu (Reload/Force Reload/Toggle DevTools/View/Window...)
-// is developer-facing clutter for a shipped app. Keep just Edit so native
-// Cut/Copy/Paste keyboard shortcuts keep working in text inputs (macOS in
-// particular routes those through menu roles, not the OS by itself).
+// is developer-facing clutter for a shipped app, so drop it entirely. Note
+// this also drops native Cut/Copy/Paste menu roles, which macOS otherwise
+// relies on to make those shortcuts work in text inputs.
 function buildAppMenu() {
+	// no menu bar at all on Windows/Linux; macOS still needs its app menu
+	// (the one with the app name, Quit, etc.) since the OS always shows one
 	const isMac = process.platform === 'darwin';
-	const template = [
-		...(isMac ? [{ role: 'appMenu' }] : []),
-		{
-			label: '編輯',
-			submenu: [
-				{ role: 'undo' }, { role: 'redo' }, { type: 'separator' },
-				{ role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },
-			],
-		},
-	];
+	const template = isMac ? [{ role: 'appMenu' }] : [];
 	return Menu.buildFromTemplate(template);
 }
 
