@@ -391,6 +391,16 @@ function clampToMaxContentWidth(w) {
 	return (max && max > 0) ? Math.min(w, max) : w;
 }
 
+// the highest zoom percentage that doesn't exceed the configured max
+// content width, so the displayed/tracked scale matches what's actually
+// rendered instead of climbing past the point where zooming in further
+// stops having any visible effect
+function maxScaleForContentWidth() {
+	var max = config.maxContentWidth;
+	if (!max || max <= 0 || !origWidth) return Infinity;
+	return (max / origWidth) * 100;
+}
+
 function setScale() {
 	if (config.viewMode === 'grid') return;
 	var pic = document.getElementById('pic');
@@ -429,7 +439,7 @@ function zoomOut() {
 function zoomIn() {
 	leaveFitMode();
 	scale = (scale === undefined) ? 100 : scale;
-	scale += (config.zoomStep || 5);
+	scale = Math.min(scale + (config.zoomStep || 5), maxScaleForContentWidth());
 	setScale();
 }
 
@@ -483,7 +493,11 @@ function stopAutoScroll() {
 
 function autoScrollStep(now) {
 	var page = document.getElementById('page');
-	var dt = (now - autoScrollLastTime) / 1000;
+	// requestAnimationFrame is throttled or fully suspended while the window
+	// is backgrounded/minimized; when it resumes, "now" can be seconds past
+	// autoScrollLastTime. Capping dt keeps a single frame from jumping the
+	// scroll position wildly or overshooting straight into stopAutoScroll().
+	var dt = Math.min((now - autoScrollLastTime) / 1000, 0.1);
 	autoScrollLastTime = now;
 	// scrollTop rounds to whole pixels, so accumulating in a separate float
 	// avoids losing sub-pixel deltas every frame (a fixed 40px/s at 60fps is
@@ -522,12 +536,27 @@ function buildMinimap() {
 	}
 }
 
+// The strip's thumbnails keep their natural aspect ratio at 100% width, so
+// its total height is usually far taller than the visible minimap column
+// (which just clips the overflow). Squeezing it down to exactly fill the
+// column's height means "where you see it in the strip" and "where a click
+// jumps to" are always measured against the same scale.
+function scaleMinimapStrip() {
+	var minimapEl = document.getElementById('minimap');
+	var stripEl = document.getElementById('minimapStrip');
+	stripEl.style.transform = '';
+	if (!stripEl.offsetHeight || !minimapEl.clientHeight) return;
+	var scaleFactor = minimapEl.clientHeight / stripEl.offsetHeight;
+	stripEl.style.transformOrigin = 'top';
+	stripEl.style.transform = 'scaleY(' + scaleFactor + ')';
+}
+
 function updateMinimapViewport() {
 	if (!config.showMinimap) return;
 	var page = document.getElementById('page');
-	var stripEl = document.getElementById('minimapStrip');
-	if (!page.scrollHeight || !stripEl.offsetHeight) return;
-	var ratio = stripEl.offsetHeight / page.scrollHeight;
+	var minimapEl = document.getElementById('minimap');
+	if (!page.scrollHeight || !minimapEl.clientHeight) return;
+	var ratio = minimapEl.clientHeight / page.scrollHeight;
 	var top = page.scrollTop * ratio;
 	var height = page.clientHeight * ratio;
 	var viewport = document.getElementById('minimapViewport');
@@ -539,6 +568,7 @@ function applyMinimapVisibility() {
 	document.body.classList.toggle('show-minimap', !!config.showMinimap);
 	if (config.showMinimap) {
 		buildMinimap();
+		scaleMinimapStrip();
 		updateMinimapViewport();
 	}
 }
@@ -551,11 +581,15 @@ function applyProgressVisibility() {
 
 var IS_MAC = /Mac|iPod|iPhone|iPad/.test(navigator.platform);
 
+// tokens whose display name isn't just their first letter capitalized
+var KEY_DISPLAY_NAMES = { plus: '+', pageup: 'PageUp', pagedown: 'PageDown' };
+
 function formatCombo(combo) {
 	// Mousetrap resolves 'mod' to Cmd on macOS and Ctrl elsewhere by itself;
 	// the display needs the same platform-specific translation
 	return (combo || '').split('+').map(function (p) {
 		if (p === 'mod') return IS_MAC ? 'Cmd' : 'Ctrl';
+		if (KEY_DISPLAY_NAMES[p]) return KEY_DISPLAY_NAMES[p];
 		return p.charAt(0).toUpperCase() + p.slice(1);
 	}).join(' + ');
 }
@@ -578,8 +612,19 @@ function showHelp() {
 	document.getElementById('my_help').classList.add('visible');
 }
 
+// closing an overlay only toggles a CSS class, so a focused <input> inside
+// it (e.g. a preferences field) stays focused even though it's now hidden.
+// Mousetrap silently ignores shortcuts while focus sits on an input, so
+// reading shortcuts would then randomly stop working depending on which
+// field was last touched. Moving focus back to the reader avoids that.
+function returnFocusToReader() {
+	var picList = document.getElementById('picList');
+	if (picList) picList.focus();
+}
+
 function hideHelp() {
 	document.getElementById('my_help').classList.remove('visible');
+	returnFocusToReader();
 }
 
 function renderAccentSwatches() {
@@ -751,6 +796,7 @@ function openPrefs() {
 
 function closePrefs() {
 	document.getElementById('prefsPanel').classList.remove('visible');
+	returnFocusToReader();
 }
 
 async function resetKeybindings() {
@@ -878,6 +924,31 @@ function bindSort() {
 	});
 }
 
+function jumpToMinimapFraction(clientY) {
+	var rect = document.getElementById('minimap').getBoundingClientRect();
+	var fraction = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+	var page = document.getElementById('page');
+	page.scrollTop = fraction * (page.scrollHeight - page.clientHeight);
+}
+
+function bindMinimapScrub() {
+	var minimap = document.getElementById('minimap');
+	var dragging = false;
+	minimap.addEventListener('mousedown', function (e) {
+		dragging = true;
+		jumpToMinimapFraction(e.clientY);
+	});
+	// listen on window (not just the minimap) so dragging past its edges,
+	// which is normal mouse movement while scrubbing, still tracks
+	window.addEventListener('mousemove', function (e) {
+		if (!dragging) return;
+		jumpToMinimapFraction(e.clientY);
+	});
+	window.addEventListener('mouseup', function () {
+		dragging = false;
+	});
+}
+
 function bindFloatingNavReveal() {
 	// class toggle rather than jQuery's .css({opacity: ...}): jQuery 1.7.2's
 	// legacy opacity cssHook misfires under modern Chromium (sets a stray
@@ -921,12 +992,6 @@ function bindButtons() {
 	document.getElementById('zoomPercent').addEventListener('blur', applyZoomPercentInput);
 	document.getElementById('chapterSearch').addEventListener('input', filterChapterList);
 	document.getElementById('page').addEventListener('wheel', function () { if (autoScrollActive) stopAutoScroll(); });
-	document.getElementById('minimap').addEventListener('click', function (e) {
-		var rect = this.getBoundingClientRect();
-		var fraction = (e.clientY - rect.top) / rect.height;
-		var page = document.getElementById('page');
-		page.scrollTop = fraction * (page.scrollHeight - page.clientHeight);
-	});
 
 	document.getElementById('prefDarkMode').addEventListener('change', toggleDark);
 	document.getElementById('prefZoomStep').addEventListener('change', function () {
@@ -1043,9 +1108,20 @@ document.getElementById('page').addEventListener('scroll', updateProgress);
 var picListResizeObserver = new ResizeObserver(function () { updateProgress(); });
 picListResizeObserver.observe(document.getElementById('picList'));
 
+// re-derive the minimap strip's fit-to-column scale whenever its natural
+// height changes (thumbnails loading in) or the column itself resizes
+// (window resize)
+var minimapResizeObserver = new ResizeObserver(function () {
+	scaleMinimapStrip();
+	updateMinimapViewport();
+});
+minimapResizeObserver.observe(document.getElementById('minimap'));
+minimapResizeObserver.observe(document.getElementById('minimapStrip'));
+
 bindSort();
 bindButtons();
 bindDragDrop();
+bindMinimapScrub();
 bindFloatingNavReveal();
 setWindow();
 readConfig();
