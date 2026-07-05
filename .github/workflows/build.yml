@@ -7,6 +7,10 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  # creating a Release through the GitHub web UI or mobile app (rather than
+  # `git push` of a tag) only fires this event, not a tag push
+  release:
+    types: [published]
 
 jobs:
   test:
@@ -21,7 +25,7 @@ jobs:
 
   build:
     needs: test
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'release'
     strategy:
       fail-fast: false
       matrix:
@@ -47,7 +51,7 @@ jobs:
 
   release:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
     runs-on: ubuntu-latest
     permissions:
       contents: write
