@@ -32,15 +32,24 @@
 		},
 		"win": {
 			"target": "nsis",
-			"icon": "img/icon.png"
+			"icon": "img/icon.png",
+			"extraResources": [
+				{ "from": "resources/waifu2x/win", "to": "waifu2x/win" }
+			]
 		},
 		"mac": {
 			"target": "dmg",
-			"icon": "img/icon.png"
+			"icon": "img/icon.png",
+			"extraResources": [
+				{ "from": "resources/waifu2x/mac", "to": "waifu2x/mac" }
+			]
 		},
 		"linux": {
 			"target": "AppImage",
-			"icon": "img/icon.png"
+			"icon": "img/icon.png",
+			"extraResources": [
+				{ "from": "resources/waifu2x/linux", "to": "waifu2x/linux" }
+			]
 		}
 	}
 }

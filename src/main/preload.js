@@ -18,4 +18,6 @@ contextBridge.exposeInMainWorld('api', {
 	getLaunchPath: () => ipcRenderer.invoke('app:get-launch-path'),
 	getVersion: () => ipcRenderer.invoke('app:get-version'),
 	onOpenPathRequest: (cb) => ipcRenderer.on('open-path-request', (_e, p) => cb(p)),
+	isUpscalerAvailable: () => ipcRenderer.invoke('upscale:available'),
+	requestUpscale: (args) => ipcRenderer.invoke('upscale:request', args),
 });

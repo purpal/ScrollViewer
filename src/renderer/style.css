@@ -584,6 +584,14 @@ body.dark .radio-pill:hover { background: rgba(255, 255, 255, 0.06); }
 	font-size: 13.5px;
 }
 
+.pref-note {
+	margin: 0;
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--text-muted);
+}
+.pref-note.warn { color: #c77c00; }
+
 .pref-row-buttons {
 	display: flex;
 	gap: 8px;
