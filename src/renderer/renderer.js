@@ -152,6 +152,8 @@ function clean() {
 	activeChapterPos = 0;
 	pendingChapterLoad = false;
 	document.getElementById('minimapStrip').innerHTML = '';
+	upscaleRequested.clear();
+	upscaleVisible.clear();
 }
 
 function sortList() {
@@ -209,11 +211,17 @@ function appendChapterImages(node, sessionId, entries, opts) {
 		var img = document.createElement('img');
 		img.className = 'simg';
 		img.src = 'comic://' + sessionId + '/' + entry.index;
+		img.dataset.sessionId = sessionId;
+		img.dataset.pageIndex = entry.index;
 		img.addEventListener('click', function () {
 			if (config.viewMode === 'grid') switchToStripAndScroll(img);
 		});
+		img.addEventListener('load', function () {
+			if (upscaleVisible.has(img)) maybeUpscale(img);
+		});
 		if (i === 0) firstImgEl = img;
 		picList.appendChild(img);
+		upscaleObserver.observe(img);
 	});
 	loadedChapters.push({ titleNode: node, sessionId: sessionId, pageCount: entries.length, firstImgEl: firstImgEl });
 	refreshGeometryCache();
@@ -573,6 +581,7 @@ function setScale() {
 		document.querySelectorAll('.simg').forEach(function (el) { el.style.width = containerWidth + 'px'; });
 		picList.style.width = containerWidth + 'px';
 		updateZoomPercentDisplay();
+		recheckVisibleUpscaleCandidates();
 		return;
 	}
 	scale = (scale === undefined) ? 100 : scale;
@@ -580,6 +589,7 @@ function setScale() {
 	document.querySelectorAll('.simg').forEach(function (el) { el.style.width = w + 'px'; });
 	picList.style.width = w + 'px';
 	updateZoomPercentDisplay();
+	recheckVisibleUpscaleCandidates();
 }
 
 function leaveFitMode() {
@@ -764,6 +774,68 @@ function applyMinimapVisibility() {
 function applyProgressVisibility() {
 	document.body.classList.toggle('hide-progress', !config.showProgress);
 }
+
+// AI upscale --------------------------------------------------------------------------
+
+// upscaling is genuinely useful once a page is stretched well past its own
+// resolution (that's exactly when it starts looking soft/blocky); below
+// that ratio the original is already sharp enough and enhancing would just
+// burn CPU/GPU for no visible gain
+var UPSCALE_TRIGGER_RATIO = 1.5;
+var upscalerAvailable = false;
+var upscaleRequested = new Set(); // sessionId/index keys already requested, so re-entering the viewport doesn't re-request
+var upscaleVisible = new Set(); // images currently intersecting the viewport, rechecked on zoom change too
+
+function upscaleKeyFor(img) {
+	return img.dataset.sessionId + '/' + img.dataset.pageIndex;
+}
+
+function maybeUpscale(img) {
+	if (!config.aiUpscaleEnabled || !upscalerAvailable) return;
+	if (!img.naturalWidth) return; // hasn't loaded yet; its own 'load' handler below will recheck
+	var displayedWidth = img.getBoundingClientRect().width;
+	if (displayedWidth < img.naturalWidth * UPSCALE_TRIGGER_RATIO) return;
+	var key = upscaleKeyFor(img);
+	if (upscaleRequested.has(key)) return;
+	upscaleRequested.add(key);
+	window.api.requestUpscale({ sessionId: img.dataset.sessionId, index: Number(img.dataset.pageIndex) }).then(function (res) {
+		if (res && res.success) {
+			img.src = 'comic://' + img.dataset.sessionId + '/' + img.dataset.pageIndex + '/upscaled';
+		}
+		else {
+			upscaleRequested.delete(key); // transient failure (e.g. busy queue timeout) - allow retrying later
+		}
+	});
+}
+
+function recheckVisibleUpscaleCandidates() {
+	upscaleVisible.forEach(maybeUpscale);
+}
+
+// reflects binary availability in the preferences panel: the checkbox is
+// disabled (with an explanatory note) rather than silently unresponsive
+// when this build has no bundled waifu2x binary for the current platform
+function applyUpscaleAvailability() {
+	var checkbox = document.getElementById('prefAiUpscaleEnabled');
+	var note = document.getElementById('aiUpscaleNote');
+	checkbox.disabled = !upscalerAvailable;
+	if (!upscalerAvailable) {
+		note.textContent = '此版本未內建本地 AI 增強元件，暫無法使用此功能。';
+		note.classList.remove('warn');
+	}
+	else {
+		note.textContent = '使用本地 AI（waifu2x）於捲動時在背景自動加強放大檢視的低解析度頁面，並快取結果。處理過程會使用較多 CPU／GPU 資源，若裝置效能較弱，可能感覺到些微延遲或風扇聲增大。';
+		note.classList.add('warn');
+	}
+}
+
+var upscaleObserver = new IntersectionObserver(function (entries) {
+	entries.forEach(function (entry) {
+		if (entry.isIntersecting) upscaleVisible.add(entry.target);
+		else upscaleVisible.delete(entry.target);
+	});
+	recheckVisibleUpscaleCandidates();
+}, { root: document.getElementById('page'), rootMargin: '200px 0px' });
 
 // overlays: help / preferences ------------------------------------------------------------
 
@@ -979,6 +1051,8 @@ function openPrefs() {
 	document.getElementById('prefAutoContinueChapter').checked = !!config.autoContinueChapter;
 	document.getElementById('prefShowMinimap').checked = !!config.showMinimap;
 	document.getElementById('prefShowProgress').checked = !!config.showProgress;
+	document.getElementById('prefAiUpscaleEnabled').checked = !!config.aiUpscaleEnabled;
+	applyUpscaleAvailability();
 	renderAccentSwatches();
 	renderDarkShadeSwatches();
 	renderSidebarPositionSwatches();
@@ -1229,6 +1303,10 @@ function bindButtons() {
 		patchConfig({ showProgress: this.checked });
 		applyProgressVisibility();
 	});
+	document.getElementById('prefAiUpscaleEnabled').addEventListener('change', function () {
+		patchConfig({ aiUpscaleEnabled: this.checked });
+		if (this.checked) recheckVisibleUpscaleCandidates();
+	});
 }
 
 async function readConfig() {
@@ -1250,6 +1328,11 @@ async function readConfig() {
 	document.documentElement.style.setProperty('--accent', config.accentColor);
 	applyKeybindings();
 	renderRecentList();
+
+	window.api.isUpscalerAvailable().then(function (available) {
+		upscalerAvailable = available;
+		applyUpscaleAvailability();
+	});
 
 	var launchPath = await window.api.getLaunchPath();
 	if (launchPath) {

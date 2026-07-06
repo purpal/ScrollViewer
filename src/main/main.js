@@ -11,6 +11,7 @@ const { TIFF_EXT, IMAGE_EXT, ARCHIVE_EXT, IMAGE_RE, MIME_TYPES } = require('./li
 const { declaredSize, checkArchiveBudget, selectImageEntries } = require('./lib/archive-utils');
 const { mergeConfig } = require('./lib/config-merge');
 const { classifyDirEntries } = require('./lib/folder-classify');
+const { isUpscalerAvailable, upscaleImage } = require('./lib/upscaler');
 
 const DEFAULT_KEYBINDINGS = {
 	prev: 'left',
@@ -58,6 +59,7 @@ const DEFAULT_CONFIG = {
 	showMinimap: false,
 	showProgress: true,
 	autoContinueChapter: false,
+	aiUpscaleEnabled: false,
 	keybindings: { ...DEFAULT_KEYBINDINGS },
 	showSidebarToolbar: true,
 	showFloatingNav: true,
@@ -466,6 +468,30 @@ ipcMain.handle('config:reset-keybindings', () => {
 
 ipcMain.handle('app:get-version', () => app.getVersion());
 
+// AI upscaling runs one page at a time: waifu2x-ncnn-vulkan is CPU/GPU
+// heavy, and letting several requests race while the reader scrolls fast
+// would thrash the machine instead of just taking a bit longer per page.
+let upscaleQueue = Promise.resolve();
+
+ipcMain.handle('upscale:available', () => isUpscalerAvailable(app.isPackaged, process.resourcesPath));
+
+ipcMain.handle('upscale:request', (event, { sessionId, index }) => {
+	const items = archiveCache.get(sessionId);
+	const item = items && items[index];
+	if (!item) return Promise.resolve({ error: 'page not found' });
+	const job = upscaleQueue.then(async () => {
+		const result = await upscaleImage(item.buffer, item.mime, {
+			appIsPackaged: app.isPackaged,
+			resourcesPath: process.resourcesPath,
+			cacheDir: path.join(app.getPath('userData'), 'upscale-cache'),
+		});
+		item.upscaledBuffer = result;
+		return { success: true };
+	});
+	upscaleQueue = job.catch(() => {});
+	return job.catch((err) => ({ error: err.message }));
+});
+
 ipcMain.handle('window:toggle-fullscreen', () => {
 	const next = !win.isFullScreen();
 	win.setFullScreen(next);
@@ -476,12 +502,18 @@ app.whenReady().then(() => {
 	protocol.handle('comic', (request) => {
 		const url = new URL(request.url);
 		const sessionId = url.hostname;
-		const index = Number(url.pathname.replace(/^\//, ''));
+		const parts = url.pathname.replace(/^\//, '').split('/');
+		const index = Number(parts[0]);
+		const wantUpscaled = parts[1] === 'upscaled';
 		const items = archiveCache.get(sessionId);
 		if (!items || !items[index]) {
 			return new Response(null, { status: 404 });
 		}
 		const item = items[index];
+		if (wantUpscaled) {
+			if (!item.upscaledBuffer) return new Response(null, { status: 404 });
+			return new Response(item.upscaledBuffer, { headers: { 'content-type': 'image/png' } });
+		}
 		return new Response(item.buffer, { headers: { 'content-type': item.mime } });
 	});
 

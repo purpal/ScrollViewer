@@ -1,2 +1,4 @@
 node_modules/
 dist/
+resources/waifu2x/*/*
+!resources/waifu2x/*/.gitkeep
