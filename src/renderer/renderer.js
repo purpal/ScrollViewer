@@ -615,6 +615,9 @@ function renderHelpHotkeys() {
 
 function showHelp() {
 	renderHelpHotkeys();
+	window.api.getVersion().then(function (v) {
+		document.getElementById('appVersion').textContent = 'v' + v;
+	});
 	document.getElementById('my_help').classList.add('visible');
 }
 

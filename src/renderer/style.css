@@ -541,6 +541,12 @@ body.dark .radio-pill:hover { background: rgba(255, 255, 255, 0.06); }
 	font-size: 20px;
 }
 
+.version-tag {
+	font-size: 12px;
+	font-weight: normal;
+	color: var(--text-muted);
+}
+
 .help-block { margin-bottom: 18px; }
 .help-block h4 {
 	margin: 0 0 6px;

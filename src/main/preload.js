@@ -16,5 +16,6 @@ contextBridge.exposeInMainWorld('api', {
 	dirname: (p) => path.dirname(p),
 	getDroppedPath: (file) => webUtils.getPathForFile(file),
 	getLaunchPath: () => ipcRenderer.invoke('app:get-launch-path'),
+	getVersion: () => ipcRenderer.invoke('app:get-version'),
 	onOpenPathRequest: (cb) => ipcRenderer.on('open-path-request', (_e, p) => cb(p)),
 });

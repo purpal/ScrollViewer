@@ -159,6 +159,26 @@ function saveConfig() {
 	return fs.promises.writeFile(CONFIG_PATH(), JSON.stringify(config, null, 2));
 }
 
+// config:set/reset-keybindings each read-modify-write the same file. Without
+// serializing them, two calls fired close together (e.g. toggling several
+// preferences quickly) race: both open+truncate the file, then both write
+// their own full buffer, and whichever write is shorter leaves the longer
+// write's tail bytes behind, corrupting the JSON. Every future launch then
+// fails to parse it and silently falls back to defaults, losing not just
+// the just-changed preference but all preferences and reading history.
+// Chaining every mutation onto the same promise keeps them fully sequential.
+let configWriteQueue = Promise.resolve();
+
+function queueConfigMutation(mutate) {
+	configWriteQueue = configWriteQueue.catch(() => {}).then(async () => {
+		const onDisk = readConfigFromDisk();
+		config = mutate(onDisk);
+		await saveConfig();
+		return config;
+	});
+	return configWriteQueue;
+}
+
 function toArrayBuffer(buffer) {
 	return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
 }
@@ -426,18 +446,14 @@ ipcMain.handle('archive:open', async (event, targetPath) => {
 });
 
 ipcMain.handle('config:get', () => config);
-ipcMain.handle('config:set', async (event, partial) => {
-	const onDisk = readConfigFromDisk();
-	config = mergeConfig(onDisk, partial, MAX_HISTORY_ENTRIES);
-	await saveConfig();
-	return config;
+ipcMain.handle('config:set', (event, partial) => {
+	return queueConfigMutation((onDisk) => mergeConfig(onDisk, partial, MAX_HISTORY_ENTRIES));
 });
-ipcMain.handle('config:reset-keybindings', async () => {
-	const onDisk = readConfigFromDisk();
-	config = { ...onDisk, keybindings: { ...DEFAULT_KEYBINDINGS } };
-	await saveConfig();
-	return config;
+ipcMain.handle('config:reset-keybindings', () => {
+	return queueConfigMutation((onDisk) => ({ ...onDisk, keybindings: { ...DEFAULT_KEYBINDINGS } }));
 });
+
+ipcMain.handle('app:get-version', () => app.getVersion());
 
 ipcMain.handle('window:toggle-fullscreen', () => {
 	const next = !win.isFullScreen();
