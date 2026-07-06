@@ -56,6 +56,7 @@ const DEFAULT_CONFIG = {
 	maxContentWidth: 0,
 	showMinimap: false,
 	showProgress: true,
+	autoContinueChapter: false,
 	keybindings: { ...DEFAULT_KEYBINDINGS },
 	showSidebarToolbar: true,
 	showFloatingNav: true,
