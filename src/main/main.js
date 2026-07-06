@@ -2,7 +2,8 @@ const { app, BrowserWindow, ipcMain, dialog, protocol, Menu } = require('electro
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
-const JSZip = require('jszip');
+const { buffer: streamToBuffer } = require('node:stream/consumers');
+const yauzl = require('yauzl');
 const unrar = require('node-unrar-js');
 const UTIF = require('utif2');
 
@@ -258,17 +259,26 @@ const ARCHIVE_BUDGET = {
 // ---- reading pages: from a zip/cbz, a rar/cbr, or a plain directory of loose images ----
 
 async function extractZip(data) {
-	const zip = await JSZip.loadAsync(data);
-	const files = selectImageEntries(Object.values(zip.files), { isDir: (f) => f.dir, nameOf: (f) => f.name });
-	// central-directory metadata already gives uncompressed sizes without
-	// having to decompress, so bombs can be rejected before doing real work
-	const totalSize = files.reduce((sum, f) => sum + declaredSize(f._data && f._data.uncompressedSize), 0);
-	checkArchiveBudget(files.length, totalSize, ARCHIVE_BUDGET);
-	const items = [];
-	for (const f of files) {
-		items.push(toDisplayItem(f.name, await f.async('nodebuffer')));
+	const zipfile = await yauzl.fromBufferPromise(data, { validateEntrySizes: true });
+	try {
+		const entries = [];
+		for await (const entry of zipfile.eachEntry()) {
+			entries.push(entry);
+		}
+		const files = selectImageEntries(entries, { isDir: (e) => e.fileName.endsWith('/'), nameOf: (e) => e.fileName });
+		// central-directory metadata already gives uncompressed sizes without
+		// having to decompress, so bombs can be rejected before doing real work
+		const totalSize = files.reduce((sum, e) => sum + declaredSize(e.uncompressedSize), 0);
+		checkArchiveBudget(files.length, totalSize, ARCHIVE_BUDGET);
+		const items = [];
+		for (const entry of files) {
+			const stream = await zipfile.openReadStreamPromise(entry);
+			items.push(toDisplayItem(entry.fileName, await streamToBuffer(stream)));
+		}
+		return items;
+	} finally {
+		zipfile.close();
 	}
-	return items;
 }
 
 async function extractRar(data) {
