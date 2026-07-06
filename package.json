@@ -16,7 +16,7 @@
 		"yauzl": "^3.4.0"
 	},
 	"devDependencies": {
-		"electron": "^38.8.6",
+		"electron": "^43.0.0",
 		"electron-builder": "^26.15.3"
 	},
 	"build": {
