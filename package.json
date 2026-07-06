@@ -11,9 +11,9 @@
 	"author": "Purpal@ptt.cc",
 	"license": "ISC",
 	"dependencies": {
-		"jszip": "^3.10.1",
 		"node-unrar-js": "^2.0.2",
-		"utif2": "^4.1.0"
+		"utif2": "^4.1.0",
+		"yauzl": "^3.4.0"
 	},
 	"devDependencies": {
 		"electron": "^32.3.3",
