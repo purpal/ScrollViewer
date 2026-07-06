@@ -46,6 +46,16 @@ var currentPageCount = 0;
 var loadedChapters = [];
 var activeChapterPos = 0;
 var pendingChapterLoad = false;
+// getBoundingClientRect()/scrollHeight force a synchronous layout reflow.
+// Reading them fresh on every single 'scroll' event (which fires on every
+// animation frame during auto-scroll) forces the browser to redo layout
+// ~60 times/sec even though nothing changed shape, causing occasional
+// dropped frames that show up as visible jitter (more so at higher
+// configured auto-scroll speeds, since each frame is already moving
+// further, so any one frame's timing hiccup produces a bigger jump).
+// This cache holds the same geometry, refreshed only when content shape
+// actually changes (chapter append/evict, image loads/resizes, zoom).
+var geometryCache = { chapterTops: [], scrollHeight: 0, clientHeight: 0 };
 var autoScrollActive = false;
 var autoScrollRAF = null;
 var autoScrollLastTime = null;
@@ -206,6 +216,7 @@ function appendChapterImages(node, sessionId, entries, opts) {
 		picList.appendChild(img);
 	});
 	loadedChapters.push({ titleNode: node, sessionId: sessionId, pageCount: entries.length, firstImgEl: firstImgEl });
+	refreshGeometryCache();
 	if (opts.isManualOpen) {
 		firstImgEl.addEventListener('load', function () {
 			origWidth = firstImgEl.naturalWidth;
@@ -228,14 +239,21 @@ function getOffsetWithinPage(el) {
 	return el.getBoundingClientRect().top - page.getBoundingClientRect().top + page.scrollTop;
 }
 
+// recomputes geometryCache. Call this whenever content shape actually
+// changes (chapter append/evict, picList resize as images load in or zoom
+// changes) — never from the scroll/rAF hot path itself.
+function refreshGeometryCache() {
+	var page = document.getElementById('page');
+	geometryCache.clientHeight = page.clientHeight;
+	geometryCache.scrollHeight = page.scrollHeight;
+	geometryCache.chapterTops = loadedChapters.map(function (c) { return getOffsetWithinPage(c.firstImgEl); });
+}
+
 // the [top, top+height) span that chapter `pos` occupies within the merged
 // strip, so progress/minimap/scrubbing can be scoped to just that chapter
 function chapterBounds(pos) {
-	var page = document.getElementById('page');
-	var top = getOffsetWithinPage(loadedChapters[pos].firstImgEl);
-	var bottom = (pos + 1 < loadedChapters.length)
-		? getOffsetWithinPage(loadedChapters[pos + 1].firstImgEl)
-		: page.scrollHeight;
+	var top = geometryCache.chapterTops[pos];
+	var bottom = (pos + 1 < geometryCache.chapterTops.length) ? geometryCache.chapterTops[pos + 1] : geometryCache.scrollHeight;
 	return { top: top, height: bottom - top };
 }
 
@@ -247,8 +265,8 @@ function getCurrentVpos() {
 
 function computeActiveChapterPos() {
 	var page = document.getElementById('page');
-	for (var i = loadedChapters.length - 1; i >= 0; i--) {
-		if (getOffsetWithinPage(loadedChapters[i].firstImgEl) <= page.scrollTop + 1) return i;
+	for (var i = geometryCache.chapterTops.length - 1; i >= 0; i--) {
+		if (geometryCache.chapterTops[i] <= page.scrollTop + 1) return i;
 	}
 	return 0;
 }
@@ -298,7 +316,7 @@ function hasMoreChapterToContinue() {
 function maybeAutoContinueChapter() {
 	if (!config.autoContinueChapter || config.viewMode !== 'strip' || pendingChapterLoad || !loadedChapters.length) return;
 	var page = document.getElementById('page');
-	var nearBottom = page.scrollTop >= page.scrollHeight - page.clientHeight - 200;
+	var nearBottom = page.scrollTop >= geometryCache.scrollHeight - geometryCache.clientHeight - 200;
 	if (!nearBottom) return;
 	var last = loadedChapters[loadedChapters.length - 1];
 	var nextNode = (config.sort === 'nameu') ? last.titleNode.nextSibling : last.titleNode.previousSibling;
@@ -339,6 +357,7 @@ function evictOldestChapterIfNeeded() {
 		toRemove.remove();
 	}
 	activeChapterPos = Math.max(0, activeChapterPos - 1);
+	refreshGeometryCache();
 }
 
 function switchToStripAndScroll(el) {
@@ -648,8 +667,11 @@ function autoScrollStep(now) {
 	// clamp the tracked position to the currently known max instead of
 	// letting it run past it: if a next chapter is still loading in, this
 	// parks the scroll at the bottom without overshooting, then resumes
-	// smoothly (no jump) once the new content extends scrollHeight
-	var max = Math.max(0, page.scrollHeight - page.clientHeight);
+	// smoothly (no jump) once the new content extends scrollHeight.
+	// Uses the cached geometry rather than live scrollHeight/clientHeight
+	// reads, since those force a synchronous layout reflow on every single
+	// call — doing that on every animation frame is what caused the jitter.
+	var max = Math.max(0, geometryCache.scrollHeight - geometryCache.clientHeight);
 	autoScrollPosition = Math.min(autoScrollPosition, max);
 	page.scrollTop = autoScrollPosition;
 	if (autoScrollPosition >= max - 2 && !hasMoreChapterToContinue()) {
@@ -673,7 +695,7 @@ function updateProgress() {
 	}
 	var bounds = loadedChapters.length ? chapterBounds(activeChapterPos) : null;
 	var localTop = bounds ? Math.max(0, page.scrollTop - bounds.top) : page.scrollTop;
-	var localMax = bounds ? (bounds.height - page.clientHeight) : (page.scrollHeight - page.clientHeight);
+	var localMax = bounds ? (bounds.height - geometryCache.clientHeight) : (page.scrollHeight - page.clientHeight);
 	var pct = localMax > 0 ? Math.round((localTop / localMax) * 100) : 100;
 	pct = Math.max(0, Math.min(100, pct));
 	document.getElementById('headerProgress').textContent = pct + '%';
@@ -724,7 +746,7 @@ function updateMinimapViewport() {
 	var ratio = minimapEl.clientHeight / bounds.height;
 	var localTop = Math.max(0, page.scrollTop - bounds.top);
 	var top = localTop * ratio;
-	var height = page.clientHeight * ratio;
+	var height = geometryCache.clientHeight * ratio;
 	var viewport = document.getElementById('minimapViewport');
 	viewport.style.top = top + 'px';
 	viewport.style.height = height + 'px';
@@ -1277,8 +1299,11 @@ document.getElementById('page').addEventListener('scroll', function () {
 // loading (only the first page of each chapter fires a 'load' we listen
 // to), so a one-shot recompute goes stale; watch the actual content size
 // instead.
-var picListResizeObserver = new ResizeObserver(function () { updateProgress(); });
+var picListResizeObserver = new ResizeObserver(function () { refreshGeometryCache(); updateProgress(); });
 picListResizeObserver.observe(document.getElementById('picList'));
+// #page's own box (not just picList's content) can change independently on
+// window resize, which geometryCache.clientHeight needs to track too
+picListResizeObserver.observe(document.getElementById('page'));
 
 // re-derive the minimap strip's fit-to-column scale whenever its natural
 // height changes (thumbnails loading in) or the column itself resizes
