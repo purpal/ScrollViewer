@@ -532,6 +532,12 @@ function buildMinimap() {
 	for (var i = 0; i < currentPageCount; i++) {
 		var img = document.createElement('img');
 		img.src = 'comic://' + currentSessionId + '/' + i;
+		// <img> is draggable by default; without this, starting a scrub
+		// drag on top of a thumbnail hijacks into a native "drag this
+		// image out" operation instead of firing mousemove, which also
+		// fires spurious dragenter/dragover on our own window and pops
+		// open the "drop a folder/archive here" overlay
+		img.draggable = false;
 		strip.appendChild(img);
 	}
 }
