@@ -244,8 +244,7 @@ body.hide-sidebar-toolbar .sidebar-rail .icon-btn:not(#btnToggleSidebar) {
 	padding: 0 24px;
 }
 
-#picList.grid-view .simg,
-#picList.grid-view #pic {
+#picList.grid-view .simg {
 	width: 100% !important;
 	height: auto;
 	border-radius: 8px;
@@ -747,7 +746,7 @@ body.immersive #header {
 
 /* ---- base image tags ---- */
 
-.fimg, .simg {
+.simg {
 	border: 0;
 	margin: 0;
 	padding: 0;

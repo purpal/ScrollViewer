@@ -38,6 +38,14 @@ var boundKeys = [];
 var capturingAction = null;
 var currentSessionId = null;
 var currentPageCount = 0;
+// loadedChapters holds, in reading order, every chapter currently rendered
+// in #picList (length 1 normally, up to 2 while auto-continue is bridging
+// into the next chapter). activeChapterPos is which of those the reader is
+// currently scrolled into, used to scope progress/minimap/history to just
+// that chapter even though its images sit inside a longer merged strip.
+var loadedChapters = [];
+var activeChapterPos = 0;
+var pendingChapterLoad = false;
 var autoScrollActive = false;
 var autoScrollRAF = null;
 var autoScrollLastTime = null;
@@ -118,19 +126,21 @@ function currentHistoryEntry() {
 
 function saveCurr() {
 	if (!curr) return;
-	curr.dataset.vpos = document.getElementById('page').scrollTop;
+	curr.dataset.vpos = getCurrentVpos();
 	curr.classList.remove('active');
 }
 
 function clean() {
 	document.getElementById('titleList').innerHTML = '';
-	document.getElementById('pic').src = '';
 	showMsg('');
 	curr = null;
 	removeSimg();
 	stopAutoScroll();
 	currentSessionId = null;
 	currentPageCount = 0;
+	loadedChapters = [];
+	activeChapterPos = 0;
+	pendingChapterLoad = false;
 	document.getElementById('minimapStrip').innerHTML = '';
 }
 
@@ -158,9 +168,10 @@ async function showImg(node) {
 	node.focus();
 	showMsg(basename(src));
 	removeSimg();
-	var pic = document.getElementById('pic');
-	pic.src = '';
 	stopAutoScroll();
+	loadedChapters = [];
+	activeChapterPos = 0;
+	pendingChapterLoad = false;
 
 	setLoading(true);
 	var res = await window.api.openArchive(src);
@@ -169,31 +180,165 @@ async function showImg(node) {
 		showMsg(res.error);
 		return;
 	}
-	currentSessionId = res.sessionId;
-	currentPageCount = res.entries.length;
-	res.entries.forEach(function (entry, i) {
-		var url = 'comic://' + res.sessionId + '/' + entry.index;
-		if (i === 0) {
-			pic.src = url;
-			// reassigning onclick replaces any handler from a previous
-			// showImg() call instead of stacking a new listener each time
-			pic.onclick = function () {
-				if (config.viewMode === 'grid') switchToStripAndScroll(pic);
-			};
-		}
-		else {
-			var img = document.createElement('img');
-			img.className = 'simg';
-			img.src = url;
-			img.addEventListener('click', function () {
-				if (config.viewMode === 'grid') switchToStripAndScroll(img);
-			});
-			document.getElementById('picList').appendChild(img);
-		}
-	});
+	appendChapterImages(node, res.sessionId, res.entries, { isManualOpen: true });
+	refreshActiveChapterDisplay();
 	document.getElementById('picList').focus();
-	buildMinimap();
 	updateProgress();
+}
+
+// Renders one chapter's pages into #picList and records it in
+// loadedChapters. isManualOpen distinguishes a user-initiated chapter open
+// (recompute origWidth from this chapter's own first page, and restore its
+// remembered scroll position once that page loads) from an auto-continued
+// append (seamlessly extend the strip using the already-established zoom
+// basis, with no scroll jump).
+function appendChapterImages(node, sessionId, entries, opts) {
+	var picList = document.getElementById('picList');
+	var firstImgEl = null;
+	entries.forEach(function (entry, i) {
+		var img = document.createElement('img');
+		img.className = 'simg';
+		img.src = 'comic://' + sessionId + '/' + entry.index;
+		img.addEventListener('click', function () {
+			if (config.viewMode === 'grid') switchToStripAndScroll(img);
+		});
+		if (i === 0) firstImgEl = img;
+		picList.appendChild(img);
+	});
+	loadedChapters.push({ titleNode: node, sessionId: sessionId, pageCount: entries.length, firstImgEl: firstImgEl });
+	if (opts.isManualOpen) {
+		firstImgEl.addEventListener('load', function () {
+			origWidth = firstImgEl.naturalWidth;
+			setScale();
+			document.getElementById('page').scrollTop = node.dataset.vpos;
+			updateProgress();
+		}, { once: true });
+	}
+	else {
+		setScale();
+	}
+	return firstImgEl;
+}
+
+// pixel offset of an element within #page's scrollable content, independent
+// of margins/positioning quirks (unlike offsetTop, which needs a positioned
+// ancestor to mean the same thing)
+function getOffsetWithinPage(el) {
+	var page = document.getElementById('page');
+	return el.getBoundingClientRect().top - page.getBoundingClientRect().top + page.scrollTop;
+}
+
+// the [top, top+height) span that chapter `pos` occupies within the merged
+// strip, so progress/minimap/scrubbing can be scoped to just that chapter
+function chapterBounds(pos) {
+	var page = document.getElementById('page');
+	var top = getOffsetWithinPage(loadedChapters[pos].firstImgEl);
+	var bottom = (pos + 1 < loadedChapters.length)
+		? getOffsetWithinPage(loadedChapters[pos + 1].firstImgEl)
+		: page.scrollHeight;
+	return { top: top, height: bottom - top };
+}
+
+function getCurrentVpos() {
+	var page = document.getElementById('page');
+	if (!loadedChapters.length) return page.scrollTop;
+	return Math.max(0, page.scrollTop - chapterBounds(activeChapterPos).top);
+}
+
+function computeActiveChapterPos() {
+	var page = document.getElementById('page');
+	for (var i = loadedChapters.length - 1; i >= 0; i--) {
+		if (getOffsetWithinPage(loadedChapters[i].firstImgEl) <= page.scrollTop + 1) return i;
+	}
+	return 0;
+}
+
+// syncs currentSessionId/currentPageCount (and therefore the minimap) to
+// whichever chapter the reader is actually scrolled into
+function refreshActiveChapterDisplay() {
+	var chapter = loadedChapters[activeChapterPos];
+	if (!chapter) return;
+	currentSessionId = chapter.sessionId;
+	currentPageCount = chapter.pageCount;
+	buildMinimap();
+	scaleMinimapStrip();
+	updateMinimapViewport();
+}
+
+// called whenever scrolling carries the reader across a chapter boundary
+// inside the merged strip: hands off "active chapter" bookkeeping (history,
+// read-marking, sidebar highlight, minimap) from the outgoing chapter to
+// the incoming one
+function setActiveChapterPos(pos) {
+	if (pos === activeChapterPos || !loadedChapters[pos]) return;
+	var oldChapter = loadedChapters[activeChapterPos];
+	if (oldChapter && oldChapter.titleNode) {
+		oldChapter.titleNode.dataset.vpos = getCurrentVpos();
+		oldChapter.titleNode.classList.remove('active');
+	}
+	activeChapterPos = pos;
+	var chapter = loadedChapters[pos];
+	curr = chapter.titleNode;
+	curr.classList.add('active', 'read');
+	showMsg(basename(curr.dataset.url));
+	updateHistory(curr.dataset.url);
+	patchReadMap(config.path, curr.dataset.url);
+	refreshActiveChapterDisplay();
+	evictOldestChapterIfNeeded();
+}
+
+function hasMoreChapterToContinue() {
+	if (!config.autoContinueChapter || !loadedChapters.length) return false;
+	if (pendingChapterLoad) return true;
+	var last = loadedChapters[loadedChapters.length - 1];
+	var nextNode = (config.sort === 'nameu') ? last.titleNode.nextSibling : last.titleNode.previousSibling;
+	return !!nextNode;
+}
+
+function maybeAutoContinueChapter() {
+	if (!config.autoContinueChapter || config.viewMode !== 'strip' || pendingChapterLoad || !loadedChapters.length) return;
+	var page = document.getElementById('page');
+	var nearBottom = page.scrollTop >= page.scrollHeight - page.clientHeight - 200;
+	if (!nearBottom) return;
+	var last = loadedChapters[loadedChapters.length - 1];
+	var nextNode = (config.sort === 'nameu') ? last.titleNode.nextSibling : last.titleNode.previousSibling;
+	if (!nextNode) return;
+	appendNextChapter(nextNode);
+}
+
+async function appendNextChapter(node) {
+	pendingChapterLoad = true;
+	var res = await window.api.openArchive(node.dataset.url);
+	if (res.error) {
+		pendingChapterLoad = false;
+		return;
+	}
+	appendChapterImages(node, res.sessionId, res.entries, {});
+	evictOldestChapterIfNeeded();
+	pendingChapterLoad = false;
+}
+
+// keeps at most 2 chapters' worth of pages in the DOM: once a 3rd chapter
+// gets appended, drop the oldest one's images. Chromium's scroll anchoring
+// (on by default for #page) already compensates scrollTop for content
+// removed above the viewport, so nothing visually jumps without any manual
+// adjustment here — and doing it manually too would double-compensate.
+function evictOldestChapterIfNeeded() {
+	if (loadedChapters.length <= 2) return;
+	// never rip out the chapter the reader is still actively viewing (can
+	// happen if a short chapter puts the merged strip's bottom within reach
+	// before the active-chapter crossover into it has been detected); the
+	// next active-chapter transition retries this
+	if (activeChapterPos === 0) return;
+	var oldest = loadedChapters.shift();
+	var newFirst = loadedChapters[0].firstImgEl;
+	var el = oldest.firstImgEl;
+	while (el && el !== newFirst) {
+		var toRemove = el;
+		el = el.nextSibling;
+		toRemove.remove();
+	}
+	activeChapterPos = Math.max(0, activeChapterPos - 1);
 }
 
 function switchToStripAndScroll(el) {
@@ -403,11 +548,9 @@ function maxScaleForContentWidth() {
 
 function setScale() {
 	if (config.viewMode === 'grid') return;
-	var pic = document.getElementById('pic');
 	var picList = document.getElementById('picList');
 	if (config.zoomMode === 'fit') {
 		var containerWidth = clampToMaxContentWidth(Math.floor(document.getElementById('page').clientWidth) - 4);
-		pic.style.width = containerWidth + 'px';
 		document.querySelectorAll('.simg').forEach(function (el) { el.style.width = containerWidth + 'px'; });
 		picList.style.width = containerWidth + 'px';
 		updateZoomPercentDisplay();
@@ -415,7 +558,6 @@ function setScale() {
 	}
 	scale = (scale === undefined) ? 100 : scale;
 	var w = clampToMaxContentWidth(Math.floor(origWidth * scale / 100));
-	pic.style.width = w + 'px';
 	document.querySelectorAll('.simg').forEach(function (el) { el.style.width = w + 'px'; });
 	picList.style.width = w + 'px';
 	updateZoomPercentDisplay();
@@ -503,8 +645,14 @@ function autoScrollStep(now) {
 	// avoids losing sub-pixel deltas every frame (a fixed 40px/s at 60fps is
 	// only ~0.67px/frame, which would otherwise never move the scrollbar)
 	autoScrollPosition += (config.autoScrollSpeed || 40) * dt;
+	// clamp the tracked position to the currently known max instead of
+	// letting it run past it: if a next chapter is still loading in, this
+	// parks the scroll at the bottom without overshooting, then resumes
+	// smoothly (no jump) once the new content extends scrollHeight
+	var max = Math.max(0, page.scrollHeight - page.clientHeight);
+	autoScrollPosition = Math.min(autoScrollPosition, max);
 	page.scrollTop = autoScrollPosition;
-	if (page.scrollTop >= page.scrollHeight - page.clientHeight - 2) {
+	if (autoScrollPosition >= max - 2 && !hasMoreChapterToContinue()) {
 		stopAutoScroll();
 		return;
 	}
@@ -513,10 +661,20 @@ function autoScrollStep(now) {
 
 // reading progress -----------------------------------------------------------------------
 
+// progress/minimap are scoped to whichever chapter the reader is currently
+// scrolled into, not the whole merged strip, so "50%"/the minimap viewport
+// always describe position within a single chapter even when the next one
+// has already been bridged in underneath it
 function updateProgress() {
 	var page = document.getElementById('page');
-	var max = page.scrollHeight - page.clientHeight;
-	var pct = max > 0 ? Math.round((page.scrollTop / max) * 100) : 100;
+	if (loadedChapters.length) {
+		var newActive = computeActiveChapterPos();
+		if (newActive !== activeChapterPos) setActiveChapterPos(newActive);
+	}
+	var bounds = loadedChapters.length ? chapterBounds(activeChapterPos) : null;
+	var localTop = bounds ? Math.max(0, page.scrollTop - bounds.top) : page.scrollTop;
+	var localMax = bounds ? (bounds.height - page.clientHeight) : (page.scrollHeight - page.clientHeight);
+	var pct = localMax > 0 ? Math.round((localTop / localMax) * 100) : 100;
 	pct = Math.max(0, Math.min(100, pct));
 	document.getElementById('headerProgress').textContent = pct + '%';
 	document.getElementById('progressBar').style.width = pct + '%';
@@ -561,9 +719,11 @@ function updateMinimapViewport() {
 	if (!config.showMinimap) return;
 	var page = document.getElementById('page');
 	var minimapEl = document.getElementById('minimap');
-	if (!page.scrollHeight || !minimapEl.clientHeight) return;
-	var ratio = minimapEl.clientHeight / page.scrollHeight;
-	var top = page.scrollTop * ratio;
+	var bounds = loadedChapters.length ? chapterBounds(activeChapterPos) : { top: 0, height: page.scrollHeight };
+	if (!bounds.height || !minimapEl.clientHeight) return;
+	var ratio = minimapEl.clientHeight / bounds.height;
+	var localTop = Math.max(0, page.scrollTop - bounds.top);
+	var top = localTop * ratio;
 	var height = page.clientHeight * ratio;
 	var viewport = document.getElementById('minimapViewport');
 	viewport.style.top = top + 'px';
@@ -794,6 +954,7 @@ function openPrefs() {
 	document.getElementById('prefShowSidebarToolbar').checked = !!config.showSidebarToolbar;
 	document.getElementById('prefShowFloatingNav').checked = !!config.showFloatingNav;
 	document.getElementById('prefGridViewEnabled').checked = !!config.gridViewEnabled;
+	document.getElementById('prefAutoContinueChapter').checked = !!config.autoContinueChapter;
 	document.getElementById('prefShowMinimap').checked = !!config.showMinimap;
 	document.getElementById('prefShowProgress').checked = !!config.showProgress;
 	renderAccentSwatches();
@@ -937,7 +1098,8 @@ function jumpToMinimapFraction(clientY) {
 	var rect = document.getElementById('minimap').getBoundingClientRect();
 	var fraction = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
 	var page = document.getElementById('page');
-	page.scrollTop = fraction * (page.scrollHeight - page.clientHeight);
+	var bounds = loadedChapters.length ? chapterBounds(activeChapterPos) : { top: 0, height: page.scrollHeight };
+	page.scrollTop = bounds.top + fraction * Math.max(0, bounds.height - page.clientHeight);
 }
 
 function bindMinimapScrub() {
@@ -1034,6 +1196,9 @@ function bindButtons() {
 		patchConfig({ gridViewEnabled: this.checked });
 		applyGridAvailability();
 	});
+	document.getElementById('prefAutoContinueChapter').addEventListener('change', function () {
+		patchConfig({ autoContinueChapter: this.checked });
+	});
 	document.getElementById('prefShowMinimap').addEventListener('change', function () {
 		patchConfig({ showMinimap: this.checked });
 		applyMinimapVisibility();
@@ -1087,7 +1252,7 @@ function setWindow() {
 	window.api.onBeforeClose(function () {
 		stopAutoScroll();
 		if (curr) {
-			patchHistory(config.path, { file: curr.dataset.url, vpos: document.getElementById('page').scrollTop })
+			patchHistory(config.path, { file: curr.dataset.url, vpos: getCurrentVpos() })
 				.then(function () { window.api.readyToClose(); });
 		}
 		else {
@@ -1098,22 +1263,20 @@ function setWindow() {
 
 // script is loaded at the end of <body>, after all markup above, so the DOM
 // is already parsed and every element referenced here already exists
-document.getElementById('pic').addEventListener('load', function () {
-	var pic = document.getElementById('pic');
-	if (curr) {
-		document.getElementById('picList').focus();
-		document.getElementById('page').scrollTop = curr.dataset.vpos;
-	}
-	origWidth = pic.naturalWidth;
-	setScale();
+document.getElementById('page').addEventListener('scroll', function () {
 	updateProgress();
+	// only checked on genuine scroll (user or auto-scroll), never from the
+	// ResizeObserver-driven recomputes below: while a chapter's images are
+	// still loading in, scrollHeight can transiently be no taller than the
+	// viewport, which would otherwise look like a false "already at the
+	// bottom" before the reader has scrolled at all
+	maybeAutoContinueChapter();
 });
 
-document.getElementById('page').addEventListener('scroll', updateProgress);
-
 // scrollHeight keeps growing as each subsequent strip image finishes
-// loading (only the first #pic fires a 'load' we listen to), so a
-// one-shot recompute goes stale; watch the actual content size instead.
+// loading (only the first page of each chapter fires a 'load' we listen
+// to), so a one-shot recompute goes stale; watch the actual content size
+// instead.
 var picListResizeObserver = new ResizeObserver(function () { updateProgress(); });
 picListResizeObserver.observe(document.getElementById('picList'));
 
