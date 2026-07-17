@@ -48,6 +48,18 @@ var currentPageCount = 0;
 var loadedChapters = [];
 var activeChapterPos = 0;
 var pendingChapterLoad = false;
+// set around every scrollTop write we make ourselves to keep the reader's
+// view visually stable across a chapter prepend/evict (see
+// prependChapterImages/evictOldestChapterIfNeeded). Those writes fire their
+// own native 'scroll' event, and letting that reenter the normal handler
+// below is actively harmful, not just wasteful: landing scrollTop near 0
+// right after evicting the front chapter looks identical to "the reader
+// scrolled up to the top", which would immediately re-fetch and re-prepend
+// the very chapter that was just evicted, thrashing between the two
+// forever instead of settling.
+var isCompensatingScroll = false;
+// debounce handle for maybeAutoContinuePreviousChapter - see its own comment
+var previousContinueDebounceTimer = null;
 // getBoundingClientRect()/scrollHeight force a synchronous layout reflow.
 // Reading them fresh on every single 'scroll' event (which fires on every
 // animation frame during auto-scroll) forces the browser to redo layout
@@ -153,6 +165,10 @@ function clean() {
 	loadedChapters = [];
 	activeChapterPos = 0;
 	pendingChapterLoad = false;
+	if (previousContinueDebounceTimer) {
+		clearTimeout(previousContinueDebounceTimer);
+		previousContinueDebounceTimer = null;
+	}
 	document.getElementById('minimapStrip').innerHTML = '';
 	upscaleRequested.clear();
 	upscaleVisible.clear();
@@ -269,14 +285,18 @@ function prependChapterImages(node, sessionId, entries) {
 	entries.forEach(function (entry, i) {
 		var img = createPageImg(sessionId, entry);
 		img.addEventListener('load', function () {
+			// this scrollTop write's resulting 'scroll' event isn't
+			// necessarily dispatched synchronously, so the
+			// isCompensatingScroll guard has to stay up past this task -
+			// see the flag's own comment for why re-entering the normal
+			// handler here is actively harmful, not just redundant. Refresh
+			// geometryCache and progress/minimap explicitly since that
+			// normal handling is being skipped.
+			isCompensatingScroll = true;
 			page.scrollTop += img.getBoundingClientRect().height;
-			// this scrollTop write fires a synchronous 'scroll' event, whose
-			// handler re-checks both continue-chapter directions using
-			// geometryCache - refresh it immediately so that check sees a
-			// scrollHeight consistent with the scrollTop we just set,
-			// instead of a stale pre-growth snapshot that would make the
-			// reader look spuriously close to the bottom
 			refreshGeometryCache();
+			updateProgress();
+			requestAnimationFrame(function () { isCompensatingScroll = false; });
 		});
 		if (i === 0) firstImgEl = img;
 		picList.insertBefore(img, referenceEl);
@@ -393,15 +413,36 @@ async function appendNextChapter(node) {
 	pendingChapterLoad = false;
 }
 
+// Being "near the top" isn't on its own a reliable signal that the reader
+// wants the previous chapter: evictOldestChapterIfNeeded's compensation
+// (deliberately) leaves the reader exactly at the top of whatever chapter
+// they just forward-continued into, which reads identically. Debouncing
+// distinguishes the two: a reader still actually reading backward stays
+// near the top for a beat, while a reader who just crossed forward keeps
+// moving away from it on their very next scroll tick, well within this
+// window - confirmed empirically, since without this debounce a forward
+// crossing would immediately re-fetch and re-prepend the chapter that was
+// just evicted, thrashing between the two chapters instead of settling.
 function maybeAutoContinuePreviousChapter() {
 	if (!config.autoContinueChapter || config.viewMode !== 'strip' || pendingChapterLoad || !loadedChapters.length) return;
 	var page = document.getElementById('page');
 	var nearTop = page.scrollTop <= 200;
-	if (!nearTop) return;
-	var first = loadedChapters[0];
-	var prevNode = (config.sort === 'nameu') ? first.titleNode.previousSibling : first.titleNode.nextSibling;
-	if (!prevNode) return;
-	prependPreviousChapter(prevNode);
+	if (!nearTop) {
+		if (previousContinueDebounceTimer) {
+			clearTimeout(previousContinueDebounceTimer);
+			previousContinueDebounceTimer = null;
+		}
+		return;
+	}
+	if (previousContinueDebounceTimer) return; // already waiting to confirm this is sustained
+	previousContinueDebounceTimer = setTimeout(function () {
+		previousContinueDebounceTimer = null;
+		if (pendingChapterLoad || !loadedChapters.length || document.getElementById('page').scrollTop > 200) return;
+		var first = loadedChapters[0];
+		var prevNode = (config.sort === 'nameu') ? first.titleNode.previousSibling : first.titleNode.nextSibling;
+		if (!prevNode) return;
+		prependPreviousChapter(prevNode);
+	}, 250);
 }
 
 async function prependPreviousChapter(node) {
@@ -417,44 +458,66 @@ async function prependPreviousChapter(node) {
 }
 
 // keeps at most 2 chapters' worth of pages in the DOM: once a 3rd chapter
-// gets appended, drop the oldest one's images. Chromium's scroll anchoring
-// (on by default for #page) already compensates scrollTop for content
-// removed above the viewport, so nothing visually jumps without any manual
-// adjustment here — and doing it manually too would double-compensate.
+// gets appended, drop the oldest one's images. This used to rely on
+// Chromium's scroll anchoring to keep the view stable, on the assumption
+// that it already compensates scrollTop for content removed above the
+// viewport - true in principle, but the browser also enforces
+// scrollTop <= scrollHeight-clientHeight at all times, and removing a large
+// chapter (tens of full-height pages) can shrink the document below the
+// reader's pre-removal scrollTop mid-loop, auto-clamping it *before* any
+// compensation runs. Computing a delta off that already-clamped value and
+// subtracting it again double-compensates, driving scrollTop to 0 - exactly
+// the large visible jump this was reported as. So this captures the
+// reader's real scrollTop *before* touching the DOM at all, and sets the
+// compensated value explicitly off that captured number rather than
+// adjusting whatever scrollTop happens to read afterward.
+//
+// The guard against evicting a still-being-viewed chapter also checks
+// *live* geometry (a fresh, forced getBoundingClientRect() read via
+// getOffsetWithinPage) rather than trusting activeChapterPos: that field is
+// derived from geometryCache, which is deliberately not kept
+// frame-perfectly fresh during scrolling (see its own comment) to avoid
+// forcing a reflow on every scroll event, so during fast scrolling a
+// still-loading chapter can make it briefly flip activeChapterPos to the
+// next chapter before the reader has truly scrolled past it.
 function evictOldestChapterIfNeeded() {
 	if (loadedChapters.length <= 2) return;
-	// never rip out the chapter the reader is still actively viewing (can
-	// happen if a short chapter puts the merged strip's bottom within reach
-	// before the active-chapter crossover into it has been detected); the
-	// next active-chapter transition retries this
-	if (activeChapterPos === 0) return;
-	var oldest = loadedChapters.shift();
-	var newFirst = loadedChapters[0].firstImgEl;
+	var page = document.getElementById('page');
+	var oldest = loadedChapters[0];
+	var newFirst = loadedChapters[1].firstImgEl;
+	var topBefore = getOffsetWithinPage(newFirst);
+	var scrollTopBeforeRemoval = page.scrollTop;
+	if (scrollTopBeforeRemoval < topBefore) return; // reader hasn't actually reached the next chapter yet
+	loadedChapters.shift();
 	var el = oldest.firstImgEl;
 	while (el && el !== newFirst) {
 		var toRemove = el;
 		el = el.nextSibling;
 		toRemove.remove();
 	}
+	var topAfter = getOffsetWithinPage(newFirst);
+	isCompensatingScroll = true;
+	page.scrollTop = scrollTopBeforeRemoval - (topBefore - topAfter);
+	requestAnimationFrame(function () { isCompensatingScroll = false; });
 	activeChapterPos = Math.max(0, activeChapterPos - 1);
 	refreshGeometryCache();
 }
 
 // mirrors evictOldestChapterIfNeeded for the backward-continue direction:
 // once a 3rd chapter loads in from prepending, drop the newest (bottom-most,
-// forward-most) one once the reader isn't actively viewing it. Since it's
+// forward-most) one once the reader isn't actually viewing it (checked
+// against live geometry for the same staleness reason as above). Since it's
 // the last chapter in DOM order, its own pages already run to the end of
-// #picList, and it sits entirely below the viewport at this point, so
-// removing it needs no scroll-anchoring compensation the way the front-end
+// #picList and it sits entirely below the viewport at this point, so
+// removing it needs no scrollTop compensation the way the front-end
 // eviction above does.
 function evictNewestChapterIfNeeded() {
 	if (loadedChapters.length <= 2) return;
-	// never rip out the chapter the reader is still actively viewing (can
-	// happen if a short chapter puts the merged strip's top within reach
-	// before the active-chapter crossover into it has been detected); the
-	// next active-chapter transition retries this
-	if (activeChapterPos === loadedChapters.length - 1) return;
-	var newest = loadedChapters.pop();
+	var page = document.getElementById('page');
+	var newest = loadedChapters[loadedChapters.length - 1];
+	var newestTop = getOffsetWithinPage(newest.firstImgEl);
+	if (page.scrollTop >= newestTop) return; // reader has actually scrolled into this chapter
+	loadedChapters.pop();
 	var el = newest.firstImgEl;
 	while (el) {
 		var toRemove = el;
@@ -1526,6 +1589,7 @@ function setWindow() {
 // script is loaded at the end of <body>, after all markup above, so the DOM
 // is already parsed and every element referenced here already exists
 document.getElementById('page').addEventListener('scroll', function () {
+	if (isCompensatingScroll) return;
 	updateProgress();
 	// only checked on genuine scroll (user or auto-scroll), never from the
 	// ResizeObserver-driven recomputes below: while a chapter's images are
