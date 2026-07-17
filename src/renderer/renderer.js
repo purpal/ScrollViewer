@@ -15,6 +15,8 @@ const ACTION_LABELS = {
 	preferences: '偏好設定',
 	pageDown: '向下翻頁',
 	pageUp: '向上翻頁',
+	scrollDown: '向下捲動',
+	scrollUp: '向上捲動',
 	autoScroll: '自動捲動切換',
 	toggleSidebarHidden: '側邊欄完全隱藏切換',
 };
@@ -546,10 +548,30 @@ function myPrev() {
 	else alert('已經是目錄開頭');
 }
 
-function pageScroll(dir) {
+// dir is -1 (up) or +1 (down). mode is 'pixel' or 'percent'; 'percent' is a
+// percentage of the active chapter's own length (falling back to the whole
+// merged strip before any chapter has loaded), not the viewport - so the
+// same percentage always covers the same fraction of "this chapter"
+// regardless of window size.
+function scrollByConfiguredAmount(dir, mode, pixels, percent) {
 	var page = document.getElementById('page');
-	var amount = page.clientHeight * 0.9 * dir;
+	var amount;
+	if (mode === 'percent') {
+		var chapterHeight = loadedChapters.length ? chapterBounds(activeChapterPos).height : geometryCache.scrollHeight;
+		amount = chapterHeight * (percent / 100) * dir;
+	}
+	else {
+		amount = pixels * dir;
+	}
 	page.scrollTo({ top: page.scrollTop + amount, behavior: 'smooth' });
+}
+
+function pageScroll(dir) {
+	scrollByConfiguredAmount(dir, config.pageScrollMode, config.pageScrollPixels, config.pageScrollPercent);
+}
+
+function arrowScroll(dir) {
+	scrollByConfiguredAmount(dir, config.arrowScrollMode, config.arrowScrollPixels, config.arrowScrollPercent);
 }
 
 // zoom -------------------------------------------------------------------------------------
@@ -1053,6 +1075,14 @@ function openPrefs() {
 	document.getElementById('prefShowProgress').checked = !!config.showProgress;
 	document.getElementById('prefAiUpscaleEnabled').checked = !!config.aiUpscaleEnabled;
 	applyUpscaleAvailability();
+	var arrowModeRadio = document.querySelector('input[name="arrowScrollMode"][value="' + config.arrowScrollMode + '"]');
+	if (arrowModeRadio) arrowModeRadio.checked = true;
+	document.getElementById('prefArrowScrollPixels').value = config.arrowScrollPixels;
+	document.getElementById('prefArrowScrollPercent').value = config.arrowScrollPercent;
+	var pageModeRadio = document.querySelector('input[name="pageScrollMode"][value="' + config.pageScrollMode + '"]');
+	if (pageModeRadio) pageModeRadio.checked = true;
+	document.getElementById('prefPageScrollPixels').value = config.pageScrollPixels;
+	document.getElementById('prefPageScrollPercent').value = config.pageScrollPercent;
 	renderAccentSwatches();
 	renderDarkShadeSwatches();
 	renderSidebarPositionSwatches();
@@ -1163,6 +1193,7 @@ function applyKeybindings() {
 		help: showHelp, openFolder: chooseFile, darkMode: toggleDark,
 		gridView: toggleGrid, fullscreen: toggleFullscreen, preferences: openPrefs,
 		pageDown: function () { pageScroll(1); }, pageUp: function () { pageScroll(-1); },
+		scrollDown: function () { arrowScroll(1); }, scrollUp: function () { arrowScroll(-1); },
 		autoScroll: toggleAutoScroll, toggleSidebarHidden: toggleSidebarHidden,
 	};
 	Object.keys(actions).forEach(function (action) {
@@ -1306,6 +1337,38 @@ function bindButtons() {
 	document.getElementById('prefAiUpscaleEnabled').addEventListener('change', function () {
 		patchConfig({ aiUpscaleEnabled: this.checked });
 		if (this.checked) recheckVisibleUpscaleCandidates();
+	});
+	document.querySelectorAll('input[name="arrowScrollMode"]').forEach(function (el) {
+		el.addEventListener('change', function () { patchConfig({ arrowScrollMode: this.value }); });
+	});
+	document.getElementById('prefArrowScrollPixels').addEventListener('change', function () {
+		var v = parseInt(this.value, 10);
+		if (!isFinite(v) || v < 1) v = 1;
+		this.value = v;
+		patchConfig({ arrowScrollPixels: v });
+	});
+	document.getElementById('prefArrowScrollPercent').addEventListener('change', function () {
+		var v = parseInt(this.value, 10);
+		if (!isFinite(v) || v < 1) v = 1;
+		if (v > 100) v = 100;
+		this.value = v;
+		patchConfig({ arrowScrollPercent: v });
+	});
+	document.querySelectorAll('input[name="pageScrollMode"]').forEach(function (el) {
+		el.addEventListener('change', function () { patchConfig({ pageScrollMode: this.value }); });
+	});
+	document.getElementById('prefPageScrollPixels').addEventListener('change', function () {
+		var v = parseInt(this.value, 10);
+		if (!isFinite(v) || v < 1) v = 1;
+		this.value = v;
+		patchConfig({ pageScrollPixels: v });
+	});
+	document.getElementById('prefPageScrollPercent').addEventListener('change', function () {
+		var v = parseInt(this.value, 10);
+		if (!isFinite(v) || v < 1) v = 1;
+		if (v > 100) v = 100;
+		this.value = v;
+		patchConfig({ pageScrollPercent: v });
 	});
 }
 

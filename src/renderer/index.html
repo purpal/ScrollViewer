@@ -224,6 +224,40 @@
 		</section>
 
 		<section class="pref-block">
+			<h4>捲動距離</h4>
+			<div class="pref-row">
+				<label>↑ / ↓ 鍵捲動模式</label>
+				<div class="sort-options">
+					<label class="radio-pill"><input type="radio" name="arrowScrollMode" value="pixel" id="arrowScrollModePixel"><span>固定像素</span></label>
+					<label class="radio-pill"><input type="radio" name="arrowScrollMode" value="percent" id="arrowScrollModePercent"><span>依本話長度百分比</span></label>
+				</div>
+			</div>
+			<div class="pref-row">
+				<label>↑ / ↓ 鍵捲動像素（px）</label>
+				<input type="number" id="prefArrowScrollPixels" min="1" max="5000" step="10" class="pref-number">
+			</div>
+			<div class="pref-row">
+				<label>↑ / ↓ 鍵捲動百分比（%）</label>
+				<input type="number" id="prefArrowScrollPercent" min="1" max="100" step="1" class="pref-number">
+			</div>
+			<div class="pref-row">
+				<label>PageUp / PageDown 鍵捲動模式</label>
+				<div class="sort-options">
+					<label class="radio-pill"><input type="radio" name="pageScrollMode" value="pixel" id="pageScrollModePixel"><span>固定像素</span></label>
+					<label class="radio-pill"><input type="radio" name="pageScrollMode" value="percent" id="pageScrollModePercent"><span>依本話長度百分比</span></label>
+				</div>
+			</div>
+			<div class="pref-row">
+				<label>PageUp / PageDown 鍵捲動像素（px）</label>
+				<input type="number" id="prefPageScrollPixels" min="1" max="5000" step="10" class="pref-number">
+			</div>
+			<div class="pref-row">
+				<label>PageUp / PageDown 鍵捲動百分比（%）</label>
+				<input type="number" id="prefPageScrollPercent" min="1" max="100" step="1" class="pref-number">
+			</div>
+		</section>
+
+		<section class="pref-block">
 			<h4>AI 影像增強</h4>
 			<div class="pref-row">
 				<label>放大時自動以本地 AI 補強低解析度畫面</label>
