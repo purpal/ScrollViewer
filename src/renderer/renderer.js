@@ -200,6 +200,22 @@ async function showImg(node) {
 	updateProgress();
 }
 
+function createPageImg(sessionId, entry) {
+	var img = document.createElement('img');
+	img.className = 'simg';
+	img.src = 'comic://' + sessionId + '/' + entry.index;
+	img.dataset.sessionId = sessionId;
+	img.dataset.pageIndex = entry.index;
+	img.addEventListener('click', function () {
+		if (config.viewMode === 'grid') switchToStripAndScroll(img);
+	});
+	img.addEventListener('load', function () {
+		if (upscaleVisible.has(img)) maybeUpscale(img);
+	});
+	upscaleObserver.observe(img);
+	return img;
+}
+
 // Renders one chapter's pages into #picList and records it in
 // loadedChapters. isManualOpen distinguishes a user-initiated chapter open
 // (recompute origWidth from this chapter's own first page, and restore its
@@ -210,20 +226,9 @@ function appendChapterImages(node, sessionId, entries, opts) {
 	var picList = document.getElementById('picList');
 	var firstImgEl = null;
 	entries.forEach(function (entry, i) {
-		var img = document.createElement('img');
-		img.className = 'simg';
-		img.src = 'comic://' + sessionId + '/' + entry.index;
-		img.dataset.sessionId = sessionId;
-		img.dataset.pageIndex = entry.index;
-		img.addEventListener('click', function () {
-			if (config.viewMode === 'grid') switchToStripAndScroll(img);
-		});
-		img.addEventListener('load', function () {
-			if (upscaleVisible.has(img)) maybeUpscale(img);
-		});
+		var img = createPageImg(sessionId, entry);
 		if (i === 0) firstImgEl = img;
 		picList.appendChild(img);
-		upscaleObserver.observe(img);
 	});
 	loadedChapters.push({ titleNode: node, sessionId: sessionId, pageCount: entries.length, firstImgEl: firstImgEl });
 	refreshGeometryCache();
@@ -239,6 +244,47 @@ function appendChapterImages(node, sessionId, entries, opts) {
 		setScale();
 	}
 	return firstImgEl;
+}
+
+// mirrors appendChapterImages for auto-continuing to the PREVIOUS chapter
+// when the reader scrolls up past the top of the currently loaded strip:
+// inserts pages before the current first page instead of after the last.
+// Unlike evictOldestChapterIfNeeded below, this can't lean on Chromium's
+// scroll anchoring alone: anchoring only compensates scrollTop for changes
+// above an existing in-viewport anchor node, and empirically does not
+// engage at all when scrollTop is already at/near 0 (the browser instead
+// treats "pinned to the very top" as a state to keep, the same way it keeps
+// "pinned to the bottom" for chat-style feeds) - exactly the position this
+// trigger always fires from. So each new page's own 'load' handler nudges
+// scrollTop by exactly that page's rendered height once it appears (each
+// page contributes an independent, isolated height jump from 0 to its
+// natural size, so summing these compensates for the whole chapter
+// regardless of load order), keeping the reader's view pinned to the same
+// content instead of jumping onto the newly prepended pages.
+function prependChapterImages(node, sessionId, entries) {
+	var page = document.getElementById('page');
+	var picList = document.getElementById('picList');
+	var referenceEl = loadedChapters.length ? loadedChapters[0].firstImgEl : null;
+	var firstImgEl = null;
+	entries.forEach(function (entry, i) {
+		var img = createPageImg(sessionId, entry);
+		img.addEventListener('load', function () {
+			page.scrollTop += img.getBoundingClientRect().height;
+			// this scrollTop write fires a synchronous 'scroll' event, whose
+			// handler re-checks both continue-chapter directions using
+			// geometryCache - refresh it immediately so that check sees a
+			// scrollHeight consistent with the scrollTop we just set,
+			// instead of a stale pre-growth snapshot that would make the
+			// reader look spuriously close to the bottom
+			refreshGeometryCache();
+		});
+		if (i === 0) firstImgEl = img;
+		picList.insertBefore(img, referenceEl);
+	});
+	loadedChapters.unshift({ titleNode: node, sessionId: sessionId, pageCount: entries.length, firstImgEl: firstImgEl });
+	activeChapterPos += 1; // the chapter the reader was viewing just shifted from index 0 to index 1
+	refreshGeometryCache();
+	setScale();
 }
 
 // pixel offset of an element within #page's scrollable content, independent
@@ -313,6 +359,7 @@ function setActiveChapterPos(pos) {
 	patchReadMap(config.path, curr.dataset.url);
 	refreshActiveChapterDisplay();
 	evictOldestChapterIfNeeded();
+	evictNewestChapterIfNeeded();
 }
 
 function hasMoreChapterToContinue() {
@@ -346,6 +393,29 @@ async function appendNextChapter(node) {
 	pendingChapterLoad = false;
 }
 
+function maybeAutoContinuePreviousChapter() {
+	if (!config.autoContinueChapter || config.viewMode !== 'strip' || pendingChapterLoad || !loadedChapters.length) return;
+	var page = document.getElementById('page');
+	var nearTop = page.scrollTop <= 200;
+	if (!nearTop) return;
+	var first = loadedChapters[0];
+	var prevNode = (config.sort === 'nameu') ? first.titleNode.previousSibling : first.titleNode.nextSibling;
+	if (!prevNode) return;
+	prependPreviousChapter(prevNode);
+}
+
+async function prependPreviousChapter(node) {
+	pendingChapterLoad = true;
+	var res = await window.api.openArchive(node.dataset.url);
+	if (res.error) {
+		pendingChapterLoad = false;
+		return;
+	}
+	prependChapterImages(node, res.sessionId, res.entries);
+	evictNewestChapterIfNeeded();
+	pendingChapterLoad = false;
+}
+
 // keeps at most 2 chapters' worth of pages in the DOM: once a 3rd chapter
 // gets appended, drop the oldest one's images. Chromium's scroll anchoring
 // (on by default for #page) already compensates scrollTop for content
@@ -367,6 +437,30 @@ function evictOldestChapterIfNeeded() {
 		toRemove.remove();
 	}
 	activeChapterPos = Math.max(0, activeChapterPos - 1);
+	refreshGeometryCache();
+}
+
+// mirrors evictOldestChapterIfNeeded for the backward-continue direction:
+// once a 3rd chapter loads in from prepending, drop the newest (bottom-most,
+// forward-most) one once the reader isn't actively viewing it. Since it's
+// the last chapter in DOM order, its own pages already run to the end of
+// #picList, and it sits entirely below the viewport at this point, so
+// removing it needs no scroll-anchoring compensation the way the front-end
+// eviction above does.
+function evictNewestChapterIfNeeded() {
+	if (loadedChapters.length <= 2) return;
+	// never rip out the chapter the reader is still actively viewing (can
+	// happen if a short chapter puts the merged strip's top within reach
+	// before the active-chapter crossover into it has been detected); the
+	// next active-chapter transition retries this
+	if (activeChapterPos === loadedChapters.length - 1) return;
+	var newest = loadedChapters.pop();
+	var el = newest.firstImgEl;
+	while (el) {
+		var toRemove = el;
+		el = el.nextSibling;
+		toRemove.remove();
+	}
 	refreshGeometryCache();
 }
 
@@ -1439,6 +1533,7 @@ document.getElementById('page').addEventListener('scroll', function () {
 	// viewport, which would otherwise look like a false "already at the
 	// bottom" before the reader has scrolled at all
 	maybeAutoContinueChapter();
+	maybeAutoContinuePreviousChapter();
 });
 
 // scrollHeight keeps growing as each subsequent strip image finishes

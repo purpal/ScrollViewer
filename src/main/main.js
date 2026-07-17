@@ -60,7 +60,7 @@ const DEFAULT_CONFIG = {
 	maxContentWidth: 0,
 	showMinimap: false,
 	showProgress: true,
-	autoContinueChapter: false,
+	autoContinueChapter: true,
 	aiUpscaleEnabled: false,
 	arrowScrollMode: 'pixel',
 	arrowScrollPixels: 100,
