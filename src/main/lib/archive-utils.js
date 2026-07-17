@@ -19,6 +19,28 @@ function checkArchiveBudget(entryCount, totalUncompressedSize, limits) {
 	}
 }
 
+// a classic decompression bomb hides an extreme compression ratio in one
+// entry (the canonical 42.zip turns ~40KB into ~4.5PB); real image data is
+// already its own compressed format, so even a very flat/simple page rarely
+// deflates past a few dozen-to-one. Checking this from declared metadata
+// alone (central directory / archive header, no I/O) catches a bomb entry
+// before any decompression work is attempted, independent of the total-size
+// budget below - a single oversized entry among otherwise-small ones would
+// still pass an aggregate check until it was actually decompressed.
+function checkEntryRatios(entries, { compressedSizeOf, uncompressedSizeOf, nameOf }, maxRatio) {
+	for (const entry of entries) {
+		const compressed = declaredSize(compressedSizeOf(entry));
+		const uncompressed = declaredSize(uncompressedSizeOf(entry));
+		if (uncompressed <= 0) continue; // nothing to expand into, not a bomb risk
+		// a near-zero compressed size feeding real output is itself the
+		// signature of an extreme-ratio bomb entry, regardless of the exact ratio
+		const ratio = compressed <= 0 ? Infinity : uncompressed / compressed;
+		if (ratio > maxRatio) {
+			throw new Error(`Archive entry "${nameOf(entry)}" has a suspicious compression ratio (${Number.isFinite(ratio) ? Math.round(ratio) : 'unbounded'}:1)`);
+		}
+	}
+}
+
 // selects only image entries from a zip/rar entry list and sorts by name;
 // isDir/nameOf abstract over jszip's ZipObject vs node-unrar-js's FileHeader shapes
 function selectImageEntries(entries, { isDir, nameOf }) {
@@ -27,4 +49,4 @@ function selectImageEntries(entries, { isDir, nameOf }) {
 		.sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
 }
 
-module.exports = { declaredSize, checkArchiveBudget, selectImageEntries };
+module.exports = { declaredSize, checkArchiveBudget, checkEntryRatios, selectImageEntries };

@@ -8,7 +8,7 @@ const unrar = require('node-unrar-js');
 const UTIF = require('utif2');
 
 const { TIFF_EXT, IMAGE_EXT, ARCHIVE_EXT, IMAGE_RE, MIME_TYPES } = require('./lib/file-types');
-const { declaredSize, checkArchiveBudget, selectImageEntries } = require('./lib/archive-utils');
+const { declaredSize, checkArchiveBudget, checkEntryRatios, selectImageEntries } = require('./lib/archive-utils');
 const { mergeConfig } = require('./lib/config-merge');
 const { classifyDirEntries } = require('./lib/folder-classify');
 const { isUpscalerAvailable, upscaleImage } = require('./lib/upscaler');
@@ -251,11 +251,18 @@ function toDisplayItem(name, buffer) {
 }
 
 // guards against zip/rar bombs: a small archive file that expands to an
-// enormous amount of data or an enormous number of entries
+// enormous amount of data. The total-decompressed-size and per-entry
+// compression-ratio checks below are what actually correlate with resource
+// cost; maxEntries is deliberately generous - a legitimate large chapter can
+// have thousands of image entries and pose no risk, so it exists only as a
+// sanity net against an archive with an absurd number of near-empty entries,
+// where merely enumerating the central directory/header list would itself
+// become slow.
 const MAX_ARCHIVE_FILE_SIZE = 500 * 1024 * 1024; // 500MB on disk
 const ARCHIVE_BUDGET = {
-	maxEntries: 2000,
+	maxEntries: 20000,
 	maxTotalSize: 1024 * 1024 * 1024, // 1GB decompressed
+	maxRatio: 100, // compressed:uncompressed ratio beyond which a single entry is treated as a bomb
 };
 
 // ---- reading pages: from a zip/cbz, a rar/cbr, or a plain directory of loose images ----
@@ -268,8 +275,10 @@ async function extractZip(data) {
 			entries.push(entry);
 		}
 		const files = selectImageEntries(entries, { isDir: (e) => e.fileName.endsWith('/'), nameOf: (e) => e.fileName });
-		// central-directory metadata already gives uncompressed sizes without
-		// having to decompress, so bombs can be rejected before doing real work
+		// central-directory metadata already gives compressed/uncompressed sizes
+		// without having to decompress, so bombs can be rejected before doing
+		// real work
+		checkEntryRatios(files, { compressedSizeOf: (e) => e.compressedSize, uncompressedSizeOf: (e) => e.uncompressedSize, nameOf: (e) => e.fileName }, ARCHIVE_BUDGET.maxRatio);
 		const totalSize = files.reduce((sum, e) => sum + declaredSize(e.uncompressedSize), 0);
 		checkArchiveBudget(files.length, totalSize, ARCHIVE_BUDGET);
 		const items = [];
@@ -289,6 +298,7 @@ async function extractRar(data) {
 		isDir: (h) => h.flags.directory,
 		nameOf: (h) => h.name,
 	});
+	checkEntryRatios(headers, { compressedSizeOf: (h) => h.packSize, uncompressedSizeOf: (h) => h.unpSize, nameOf: (h) => h.name }, ARCHIVE_BUDGET.maxRatio);
 	const totalSize = headers.reduce((sum, h) => sum + declaredSize(h.unpSize), 0);
 	checkArchiveBudget(headers.length, totalSize, ARCHIVE_BUDGET);
 	const names = headers.map((h) => h.name);
