@@ -271,33 +271,42 @@ function appendChapterImages(node, sessionId, entries, opts) {
 // engage at all when scrollTop is already at/near 0 (the browser instead
 // treats "pinned to the very top" as a state to keep, the same way it keeps
 // "pinned to the bottom" for chat-style feeds) - exactly the position this
-// trigger always fires from. So each new page's own 'load' handler nudges
-// scrollTop by exactly that page's rendered height once it appears (each
-// page contributes an independent, isolated height jump from 0 to its
-// natural size, so summing these compensates for the whole chapter
-// regardless of load order), keeping the reader's view pinned to the same
-// content instead of jumping onto the newly prepended pages.
+// trigger always fires from.
+//
+// Compensating scrollTop once per page as each one individually finishes
+// loading (an earlier version of this) technically kept the math correct,
+// but local image decodes tend to complete in a handful of uneven bursts
+// rather than evenly spaced out, so the reader would see several large,
+// visibly distinct jumps in quick succession while a chapter loaded in -
+// reported as a brief flicker. Since these are local reads and a whole
+// chapter typically finishes loading well under a second, this instead
+// leaves the reader's view completely untouched until every page has
+// loaded (or failed to - a broken page shouldn't hang this forever), then
+// applies the full compensation in one clean step: the previously-first
+// page's total displacement is exactly how much new content landed above
+// it, regardless of how many individual pages contributed to that or in
+// what order they loaded.
 function prependChapterImages(node, sessionId, entries) {
 	var page = document.getElementById('page');
 	var picList = document.getElementById('picList');
 	var referenceEl = loadedChapters.length ? loadedChapters[0].firstImgEl : null;
 	var firstImgEl = null;
+	var scrollTopBeforeInsertion = page.scrollTop;
+	var settledCount = 0;
+	function onPageSettled() {
+		settledCount += 1;
+		if (settledCount !== entries.length) return;
+		var addedHeight = referenceEl ? getOffsetWithinPage(referenceEl) : getOffsetWithinPage(firstImgEl);
+		isCompensatingScroll = true;
+		page.scrollTop = scrollTopBeforeInsertion + addedHeight;
+		refreshGeometryCache();
+		updateProgress();
+		requestAnimationFrame(function () { isCompensatingScroll = false; });
+	}
 	entries.forEach(function (entry, i) {
 		var img = createPageImg(sessionId, entry);
-		img.addEventListener('load', function () {
-			// this scrollTop write's resulting 'scroll' event isn't
-			// necessarily dispatched synchronously, so the
-			// isCompensatingScroll guard has to stay up past this task -
-			// see the flag's own comment for why re-entering the normal
-			// handler here is actively harmful, not just redundant. Refresh
-			// geometryCache and progress/minimap explicitly since that
-			// normal handling is being skipped.
-			isCompensatingScroll = true;
-			page.scrollTop += img.getBoundingClientRect().height;
-			refreshGeometryCache();
-			updateProgress();
-			requestAnimationFrame(function () { isCompensatingScroll = false; });
-		});
+		img.addEventListener('load', onPageSettled);
+		img.addEventListener('error', onPageSettled);
 		if (i === 0) firstImgEl = img;
 		picList.insertBefore(img, referenceEl);
 	});
